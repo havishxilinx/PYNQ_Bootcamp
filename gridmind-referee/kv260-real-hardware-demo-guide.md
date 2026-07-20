@@ -36,7 +36,7 @@ via tcpforward on 172.19.243.136   via tcpforward on 172.19.243.133
 ```
 
 Both boards run the same `gridmind-referee` wire protocol as `demo_student_bot.py` does elsewhere
-in this project (see `student-api-reference.html`) — just from a real PYNQ notebook instead of a
+in this project (see `student-competition-guide.md`, Section 12) — just from a real PYNQ notebook instead of a
 Python script, with real DPU/YOLO detection instead of a golden-answer-key lookup.
 
 ## Step 1 — Start the referee stack (this machine)
