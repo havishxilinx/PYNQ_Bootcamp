@@ -1,0 +1,7 @@
+{
+  "positions": {
+    "A1": "dog", "A2": "bottle", "A3": "dog", "A4": "bottle", "A5": "dog",
+    "B1": "bottle", "B2": "dog", "B3": "bottle", "B4": "dog", "B5": "bottle",
+    "C1": "dog", "C2": "bottle", "C3": "dog", "C4": "bottle", "C5": "dog"
+  }
+}

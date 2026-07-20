@@ -1,0 +1,22 @@
+[package]
+name = "gridmind-referee"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+axum = { version = "0.7", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+qrcode = { version = "0.14.1", default-features = false, features = ["image"] }
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+base64 = "0.22.1"
+
+[dev-dependencies]
+tempfile = "3"
+mockito = "1"
+tower = { version = "0.4", features = ["util"] }

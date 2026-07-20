@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GridMind Scoreboard</title>
+<style>
+  body { background: #0d1117; color: #e6edf3; font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 0; padding: 24px; }
+  h1 { text-align: center; font-size: 48px; letter-spacing: 2px; font-weight: 800; }
+  h1 .accent { color: #ED1C24; }
+  .panels { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; }
+  .panel { background: #161b22; border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); padding: 20px; min-width: 380px; flex: 1; max-width: 480px; }
+  .panel.grand-final { border: 1px solid rgba(237,28,36,0.4); box-shadow: 0 8px 32px rgba(237,28,36,0.15); max-width: 600px; clip-path: polygon(0 0, 100% 0, 100% 94%, 97% 100%, 0 100%); }
+  .panel h3 { font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #8b949e; }
+  .panel.grand-final h3 { color: #ff6b70; }
+  .team-row { display: flex; justify-content: space-between; align-items: center; font-size: 22px; margin-bottom: 4px; font-weight: 500; }
+  .score { font-size: 26px; font-weight: 800; color: #ED1C24; }
+  .active { color: #fff; text-shadow: 0 0 10px rgba(237,28,36,0.65); }
+  .active .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #ED1C24; margin-right: 8px; box-shadow: 0 0 6px #ED1C24; }
+  .streak { color: #f0883e; font-size: 14px; margin-left: 8px; }
+  .hints { font-size: 14px; opacity: 0.8; margin-bottom: 12px; }
+  .match-elapsed { font-size: 13px; opacity: 0.6; margin-bottom: 8px; }
+  .timer-bar { height: 5px; background: #21262d; border-radius: 3px; overflow: hidden; margin: 10px 0; }
+  .timer-fill { height: 100%; background: linear-gradient(90deg, #ED1C24, #ff6b70); transition: width 1s linear; }
+  .idle-pool { margin: 10px 0; }
+  .puzzle-banner { background: #21262d; border-left: 3px solid #ED1C24; padding: 6px 10px; font-size: 13px; margin-bottom: 10px; border-radius: 4px; }
+  .flip-banner { background: #3a2e00; border: 2px solid #ffcc00; color: #ffdd55; padding: 10px 14px; font-size: 20px; font-weight: 800; text-align: center; letter-spacing: 0.5px; margin-bottom: 10px; border-radius: 6px; }
+  .grid { display: grid; gap: 4px; margin: 12px 0; }
+  .cell { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 11px; text-align: center; padding: 2px; overflow: hidden; }
+  .cell.unmatched { background: #21262d; color: #6e7681; }
+  .cell.matched { background: rgba(237,28,36,0.16); border: 1px solid rgba(237,28,36,0.35); color: #ff9297; font-weight: bold; }
+  .standings-table table { border-collapse: collapse; }
+  .standings-table th, .standings-table td { padding: 4px 12px; text-align: left; font-size: 14px; }
+  .standings-table th { color: #8b949e; border-bottom: 1px solid #30363d; }
+  .standings-table h4 { margin-bottom: 6px; }
+  .schedule-strip { margin-top: 4px; }
+  .schedule-strip h4 { margin-bottom: 6px; color: #8b949e; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
+  .schedule-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
+  .schedule-row:last-child { border-bottom: none; }
+  .schedule-matchup { color: #e6edf3; }
+  .schedule-status { font-size: 12px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+  .schedule-status.locked { background: #21262d; color: #6e7681; }
+  .schedule-status.ready { background: #1c2a1c; color: #3fb950; }
+  .schedule-status.live { background: #1c2a3a; color: #58a6ff; }
+  .schedule-status.complete { background: #21262d; color: #a8b5c1; }
+  .reg-pool { background: #161b22; border-radius: 12px; padding: 20px; min-width: 320px; flex: 1; max-width: 480px; }
+  .reg-pool h3 { font-size: 24px; margin-bottom: 12px; }
+  .placeholder { opacity: 0.5; }
+  .team-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .team-chip { background: #21262d; border-radius: 20px; padding: 4px 14px; font-size: 14px; color: #e6edf3; }
+  .standings-and-schedule { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; margin-top: 24px; }
+  .champion { position: relative; text-align: center; padding: 20px; overflow: hidden; }
+  .champion-glow { position: absolute; top: 15%; left: 50%; width: 500px; height: 500px; transform: translate(-50%, -50%); background: radial-gradient(circle, rgba(237,28,36,0.22) 0%, rgba(237,28,36,0) 70%); pointer-events: none; }
+  .champion-content { position: relative; z-index: 1; }
+  .champion .trophy { font-size: 64px; filter: drop-shadow(0 0 20px rgba(237,28,36,0.6)); }
+  .champion .name { font-size: 40px; margin: 10px 0; font-weight: 800; }
+  .champion .name .accent { color: #ED1C24; }
+  .podium { display: flex; justify-content: center; align-items: flex-end; gap: 16px; margin: 30px auto 10px; max-width: 560px; }
+  .podium-col { display: flex; flex-direction: column; align-items: center; width: 160px; }
+  .podium-medal { font-size: 28px; margin-bottom: 6px; }
+  .podium-name { color: #e6edf3; font-size: 16px; font-weight: 700; margin-bottom: 2px; }
+  .podium-meta { color: #8b949e; font-size: 12px; margin-bottom: 10px; }
+  .podium-block { width: 100%; border-radius: 10px 10px 0 0; display: flex; align-items: flex-start; justify-content: center; padding-top: 10px; font-weight: 900; font-size: 22px; color: #fff; }
+  .podium-block.p1 { height: 110px; background: linear-gradient(180deg, #ff3b41, #ED1C24); box-shadow: 0 0 28px rgba(237,28,36,0.5); }
+  .podium-block.p2 { height: 78px; background: linear-gradient(180deg, #6b3234, #4a2224); }
+  .podium-block.p3 { height: 52px; background: linear-gradient(180deg, #4a2a2c, #33191b); }
+  .footer { text-align: center; opacity: 0.7; margin-top: 40px; }
+  .unknown-phase { text-align: center; opacity: 0.6; }
+</style>
+</head>
+<body>
+<h1>GRID<span class="accent">MIND</span></h1>
+<div id="root">connecting...</div>
+
+<script>
+const root = document.getElementById('root');
+
+// All strings below originate from operator-entered team names or referee
+// object/position labels, not from a trusted-only source -- escape before
+// interpolating into innerHTML so a stray "<" from a copy-pasted team name
+// can't break the layout (or, in the worst case, inject a script) on the
+// projected screen.
+function esc(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Position labels look like "A1".."E6" -- letter is the row, number is
+// the column. Only matched cells ever show an object name; unmatched
+// cells always show "?" so the digital view can't leak the golden
+// answer key beyond what's already visible in-person.
+function renderGrid(arena) {
+  if (!arena.all_positions.length) return '';
+  let maxRow = 0;
+  let maxCol = 0;
+  const cells = arena.all_positions.map((pos) => {
+    const row = pos.charCodeAt(0) - 64;
+    const col = parseInt(pos.slice(1), 10);
+    maxRow = Math.max(maxRow, row);
+    maxCol = Math.max(maxCol, col);
+    const obj = arena.matched[pos];
+    const cls = obj ? 'cell matched' : 'cell unmatched';
+    const label = obj ? esc(obj) : '?';
+    return { row, col, cls, label };
+  }).map(({ row, col, cls, label }) =>
+    `<div class="${cls}" style="grid-row:${row};grid-column:${col};">${label}</div>`
+  ).join('');
+  return `<div class="grid" style="grid-template-columns: repeat(${maxCol}, 1fr); grid-template-rows: repeat(${maxRow}, 1fr);">${cells}</div>`;
+}
+
+function renderArenaPanel(arena, label, extraClass) {
+  const teams = [arena.team_a, arena.team_b];
+  const rows = teams.map((team) => {
+    const isActive = team === arena.active_team;
+    const streak = arena.streak[team] || 0;
+    const hints = arena.hints_used[team] || 0;
+    const hintIcons = '\u{1F50D}'.repeat(hints) + '○'.repeat(Math.max(0, 2 - hints));
+    return `<div class="team-row ${isActive ? 'active' : ''}">
+      <span>${isActive ? '<span class="dot"></span>' : ''}${esc(team)}${streak > 0 ? `<span class="streak">🔥x${streak}</span>` : ''}</span>
+      <span class="score">${arena.scores[team] ?? 0}</span>
+    </div>
+    <div class="hints">${hintIcons}</div>`;
+  }).join('');
+
+  const pct = Math.max(0, Math.min(100, (arena.turn_seconds_remaining / 120) * 100));
+  const puzzleBanner = arena.puzzle_winner
+    ? `<div class="puzzle-banner">🧩 ${esc(arena.puzzle_winner)} solved the whole-board puzzle first — chose to go first</div>`
+    : '';
+  const flipBanner = Array.isArray(arena.flip_pending_positions)
+    ? `<div class="flip-banner">🃏 FLIP CARDS AT ${esc(arena.flip_pending_positions[0])} AND ${esc(arena.flip_pending_positions[1])} NOW</div>`
+    : '';
+
+  return `<div class="panel ${extraClass || ''}">
+    <h3>${esc(label)}</h3>
+    ${flipBanner}
+    ${puzzleBanner}
+    <div class="match-elapsed" data-match-start="${arena.match_started_at_unix_ms}">0:00 elapsed</div>
+    ${rows}
+    <div class="timer-bar"><div class="timer-fill" style="width:${pct}%"></div></div>
+    <div>${arena.turn_seconds_remaining}s left in turn</div>
+    <div>${arena.pairs_found}/${arena.total_pairs} pairs found</div>
+    ${renderGrid(arena)}
+  </div>`;
+}
+
+function renderPregamePanel(pregame, label, extraClass) {
+  const isPuzzleRace = pregame.stage === 'puzzle_race';
+  const banner = isPuzzleRace ? '🧩 Puzzle Race in progress' : '🔍 Free Hint window';
+  const riddleBlock = isPuzzleRace
+    ? `<div class="puzzle-banner">${esc(pregame.riddle)}</div>`
+    : '';
+  return `<div class="panel ${extraClass || ''}">
+    <h3>${esc(label)}</h3>
+    <div class="puzzle-banner">${banner}</div>
+    ${riddleBlock}
+    <div class="team-row"><span>${esc(pregame.team_a)}</span><span>vs</span><span>${esc(pregame.team_b)}</span></div>
+    <div class="timer-bar"><div class="timer-fill pregame-countdown-fill" data-deadline="${pregame.deadline_unix_ms}" style="width:100%"></div></div>
+    <div class="pregame-countdown-text" data-deadline="${pregame.deadline_unix_ms}">120s remaining</div>
+  </div>`;
+}
+
+function updatePregameCountdowns() {
+  const now = Date.now();
+  document.querySelectorAll('[data-deadline]').forEach((el) => {
+    const deadline = parseInt(el.dataset.deadline, 10);
+    const secondsLeft = Math.max(0, Math.round((deadline - now) / 1000));
+    if (el.classList.contains('pregame-countdown-fill')) {
+      const pct = Math.max(0, Math.min(100, (secondsLeft / 120) * 100));
+      el.style.width = `${pct}%`;
+    } else {
+      el.textContent = `${secondsLeft}s remaining`;
+    }
+  });
+}
+
+function updateMatchElapsedTimers() {
+  const now = Date.now();
+  document.querySelectorAll('[data-match-start]').forEach((el) => {
+    const start = parseInt(el.dataset.matchStart, 10);
+    const secondsElapsed = Math.max(0, Math.round((now - start) / 1000));
+    const minutes = Math.floor(secondsElapsed / 60);
+    const seconds = String(secondsElapsed % 60).padStart(2, '0');
+    el.textContent = `${minutes}:${seconds} elapsed`;
+  });
+}
+
+function renderStandingsTable(title, standings) {
+  if (!standings.length) return '';
+  const rows = standings.map((s) =>
+    `<tr><td>${esc(s.team)}</td><td>${s.wins}</td><td>${s.losses}</td><td>${s.pairs_matched}</td></tr>`
+  ).join('');
+  return `<div class="standings-table">
+    <h4>${esc(title)}</h4>
+    <table><thead><tr><th>Team</th><th>W</th><th>L</th><th>Pairs</th></tr></thead><tbody>${rows}</tbody></table>
+  </div>`;
+}
+
+function renderScheduleStrip(title, schedule) {
+  if (!schedule || !schedule.length) return '';
+  const rows = schedule.map((entry) => {
+    let statusLabel;
+    if (entry.status === 'complete') {
+      statusLabel = `complete · ${esc(entry.winner || '')} won`;
+    } else {
+      statusLabel = esc(entry.status);
+    }
+    return `<div class="schedule-row">
+      <span class="schedule-matchup">${esc(entry.team_a)} vs ${esc(entry.team_b)}</span>
+      <span class="schedule-status ${esc(entry.status)}">${statusLabel}</span>
+    </div>`;
+  }).join('');
+  return `<div class="schedule-strip">
+    <h4>${esc(title)}</h4>
+    ${rows}
+  </div>`;
+}
+
+function renderStandingsAndSchedule(pool1Standings, pool2Standings, pool1Schedule, pool2Schedule) {
+  return `<div class="standings-and-schedule">
+    ${renderStandingsTable('Pool 1 Standings', pool1Standings)}
+    ${renderScheduleStrip('Pool 1 Schedule', pool1Schedule)}
+    ${renderStandingsTable('Pool 2 Standings', pool2Standings)}
+    ${renderScheduleStrip('Pool 2 Schedule', pool2Schedule)}
+  </div>`;
+}
+
+function render(state) {
+  if (state.phase === 'registration') {
+    const pool1Chips = (state.pool1.teams || []).map((t) => `<span class="team-chip">${esc(t.name)}</span>`).join('');
+    const pool2Chips = (state.pool2.teams || []).map((t) => `<span class="team-chip">${esc(t.name)}</span>`).join('');
+    root.innerHTML = `<div class="panels">
+      <div class="reg-pool">
+        <h3>Pool 1</h3>
+        <div class="team-chips">${pool1Chips || '<span class="placeholder">No teams yet</span>'}</div>
+        ${renderScheduleStrip('Upcoming Matches', state.pool1.schedule)}
+      </div>
+      <div class="reg-pool">
+        <h3>Pool 2</h3>
+        <div class="team-chips">${pool2Chips || '<span class="placeholder">No teams yet</span>'}</div>
+        ${renderScheduleStrip('Upcoming Matches', state.pool2.schedule)}
+      </div>
+    </div>
+    <p style="text-align:center; margin-top:30px; opacity:0.7;">Registering teams…</p>`;
+    return;
+  }
+
+  if (state.phase === 'idle') {
+    root.innerHTML = `<div class="panels">
+      <div class="panel idle-pool"><h3>Pool 1</h3><div>${state.pool1.teams.map(esc).join(', ')}</div><div>${state.pool1.total_matches} matches scheduled</div></div>
+      <div class="panel idle-pool"><h3>Pool 2</h3><div>${state.pool2.teams.map(esc).join(', ')}</div><div>${state.pool2.total_matches} matches scheduled</div></div>
+    </div>
+    <p style="text-align:center; margin-top:30px;">Waiting for operator to start the tournament...</p>`;
+    return;
+  }
+
+  if (state.phase === 'live_pool_play') {
+    // The Grand Final's own pregame ceremony (riddle + free hint) still
+    // runs while `phase` is 'live_pool_play' -- the switch to the
+    // dedicated 'grand_final' phase only happens once the match is truly
+    // live (first real score update). Without this check, the audience
+    // would watch the Grand Final's entire ceremony labeled as a plain
+    // "Arena N (Pool N)" panel instead of the Grand Final styling.
+    const gf = state.grand_final_ready;
+    const label1 = gf && gf.arena === 1 ? 'GRAND FINAL' : 'Arena 1 (Pool 1)';
+    const label2 = gf && gf.arena === 2 ? 'GRAND FINAL' : 'Arena 2 (Pool 2)';
+    const class1 = gf && gf.arena === 1 ? 'grand-final' : '';
+    const class2 = gf && gf.arena === 2 ? 'grand-final' : '';
+    const a1 = state.arena1_pregame
+      ? renderPregamePanel(state.arena1_pregame, label1, class1)
+      : (state.arena1 ? renderArenaPanel(state.arena1, label1, class1) : '<div class="panel">Arena 1 idle</div>');
+    const a2 = state.arena2_pregame
+      ? renderPregamePanel(state.arena2_pregame, label2, class2)
+      : (state.arena2 ? renderArenaPanel(state.arena2, label2, class2) : '<div class="panel">Arena 2 idle</div>');
+    root.innerHTML = `<div class="panels">${a1}${a2}</div>${renderStandingsAndSchedule(state.pool1_standings, state.pool2_standings, state.pool1_schedule, state.pool2_schedule)}`;
+    updatePregameCountdowns();
+    return;
+  }
+
+  if (state.phase === 'grand_final') {
+    root.innerHTML = `<div class="panels">${renderArenaPanel(state.arena, 'GRAND FINAL', 'grand-final')}</div>${renderStandingsAndSchedule(state.pool1_standings, state.pool2_standings, state.pool1_schedule, state.pool2_schedule)}`;
+    return;
+  }
+
+  if (state.phase === 'champion') {
+    const teams = Object.keys(state.scores);
+    const runnerUp = teams.find((t) => t !== state.winner) || '';
+    const thirdPlaceCol = state.third_place ? `
+          <div class="podium-col">
+            <div class="podium-medal">🥉</div>
+            <div class="podium-name">${esc(state.third_place)}</div>
+            <div class="podium-meta">Pool runner-up</div>
+            <div class="podium-block p3">3</div>
+          </div>` : '';
+    root.innerHTML = `<div class="champion">
+      <div class="champion-glow"></div>
+      <div class="champion-content">
+        <div class="trophy">🏆</div>
+        <div class="name">${esc(state.winner)} <span class="accent">WINS</span></div>
+        <div class="podium">
+          <div class="podium-col">
+            <div class="podium-medal">🥈</div>
+            <div class="podium-name">${esc(runnerUp)}</div>
+            <div class="podium-meta">${state.scores[runnerUp] ?? 0} pts</div>
+            <div class="podium-block p2">2</div>
+          </div>
+          <div class="podium-col">
+            <div class="podium-medal">🥇</div>
+            <div class="podium-name">${esc(state.winner)}</div>
+            <div class="podium-meta">${state.scores[state.winner] ?? 0} pts</div>
+            <div class="podium-block p1">1</div>
+          </div>${thirdPlaceCol}
+        </div>
+        <div class="footer">Pool 1 winner: ${esc(state.pool1_winner)} &middot; Pool 2 winner: ${esc(state.pool2_winner)}</div>
+      </div>
+    </div>`;
+    return;
+  }
+
+  root.innerHTML = `<p class="unknown-phase">Unknown phase: ${esc(state.phase)}</p>`;
+}
+
+let retryDelaySeconds = 1;
+
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = (event) => {
+    retryDelaySeconds = 1;
+    render(JSON.parse(event.data));
+  };
+  ws.onclose = () => {
+    root.innerHTML = `<p style="text-align:center">Disconnected from Master -- reconnecting in ${retryDelaySeconds}s...</p>`;
+    setTimeout(connect, retryDelaySeconds * 1000);
+    retryDelaySeconds = Math.min(retryDelaySeconds * 2, 30);
+  };
+}
+
+connect();
+setInterval(updatePregameCountdowns, 1000);
+setInterval(updateMatchElapsedTimers, 1000);
+</script>
+</body>
+</html>

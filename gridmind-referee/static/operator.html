@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GridMind Operator Console</title>
+<style>
+  body { font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; background: #0d1117; color: #e6edf3; }
+  h1 { border-bottom: 2px solid #ED1C24; padding-bottom: 8px; font-weight: 800; letter-spacing: 1px; }
+  button { font-size: 15px; font-weight: 700; padding: 10px 20px; margin: 6px 6px 6px 0; cursor: pointer; background: #ED1C24; color: #fff; border: none; border-radius: 8px; box-shadow: 0 4px 14px rgba(237,28,36,0.35); }
+  button:hover { background: #ff3b41; }
+  input[type=text] { font-size: 16px; padding: 8px; margin-right: 6px; background: #14161c; border: 1px solid rgba(255,255,255,0.15); color: #e6edf3; border-radius: 6px; }
+  .pool { background: #14161c; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px; margin: 12px 0; }
+  .pool h3 { color: #8b949e; text-transform: uppercase; font-size: 14px; letter-spacing: 1px; }
+  #raw-state { background: #14161c; border: 1px solid rgba(255,255,255,0.08); color: #7ee787; padding: 10px; font-size: 12px; white-space: pre-wrap; font-family: "SF Mono", Consolas, monospace; }
+
+  /* Registration */
+  #registration-view .student-inputs { margin: 6px 0; }
+  #registration-view .student-inputs input { margin-bottom: 4px; display: block; }
+  .team-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .team-row span { flex: 1; }
+
+  /* Schedule */
+  .schedule-entry { padding: 6px 10px; margin: 4px 0; background: #14161c; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; color: #e6edf3; }
+  .schedule-entry.ready { cursor: pointer; opacity: 1.0; background: rgba(237,28,36,0.12); border-left: 4px solid #ED1C24; }
+  .schedule-entry.ready:hover { background: rgba(237,28,36,0.2); }
+  .schedule-entry.disabled-entry { opacity: 0.55; cursor: default; }
+
+  /* Match-assign popup overlay */
+  #match-popup-overlay {
+    display: none;
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.6);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  #match-popup-overlay.visible { display: flex; }
+  #match-popup {
+    background: #14161c;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 24px;
+    min-width: 340px;
+    max-width: 480px;
+    width: 90%;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    color: #e6edf3;
+  }
+  #match-popup h3 { margin-top: 0; }
+  .popup-mac-row { margin: 10px 0; }
+  .popup-mac-row label { display: block; font-size: 14px; margin-bottom: 2px; color: #8b949e; }
+  .popup-mac-row input.joined { border-color: #2ea043; }
+  .popup-mac-row input.waiting { border-color: #6e7681; }
+  .popup-mac-row .join-status-label { font-size: 12px; color: #8b949e; margin-top: 2px; }
+  .puzzle-choice { margin: 14px 0; }
+  .puzzle-choice label { display: block; margin-bottom: 6px; font-weight: bold; }
+  .puzzle-choice .team-btn { margin-right: 8px; background: #0d1117; border: 1px solid rgba(255,255,255,0.15); color: #e6edf3; box-shadow: none; }
+  .puzzle-choice .team-btn.selected { background: rgba(237,28,36,0.15); border-color: #ED1C24; color: #ff9297; }
+  .popup-force-row { margin: 14px 0 0; font-size: 13px; color: #8b949e; }
+  .popup-force-row label { display: flex; align-items: center; gap: 6px; }
+  .admin-panel { font-size: 14px; }
+  .admin-panel .admin-scores { margin-bottom: 10px; }
+  .admin-panel .admin-score-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .admin-panel .admin-score-row input { width: 70px; }
+  .admin-panel .admin-paused-badge { background: #d29922; color: #0d1117; font-weight: bold; padding: 2px 8px; border-radius: 4px; margin-left: 8px; font-size: 12px; }
+  .admin-panel .admin-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .admin-panel .admin-actions button.danger { background: #21262d; color: #ff9297; border: 1px solid #ED1C24; box-shadow: none; }
+  .admin-panel .admin-idle { color: #8b949e; font-style: italic; }
+  .popup-actions { margin-top: 16px; display: flex; gap: 8px; }
+  .popup-actions button:last-child { background: #21262d; color: #c9d1d9; box-shadow: none; }
+</style>
+</head>
+<body>
+<h1>GridMind Operator Console</h1>
+
+<!-- 1. Registration view -->
+<div id="registration-view" style="display:none;">
+  <h2>Registration</h2>
+
+  <div class="pool">
+    <h3>Register a Team</h3>
+    <div>
+      <label>Team name: <input type="text" id="reg-team-name" placeholder="Team name"></label>
+    </div>
+    <div class="student-inputs" id="student-inputs">
+      <input type="text" class="student-input" placeholder="Student 1 name">
+    </div>
+    <button onclick="addStudentField()">+ Add Student</button>
+    <button onclick="registerTeam()">Register Team</button>
+  </div>
+
+  <div class="pool">
+    <h3>Pool 1</h3>
+    <div id="reg-pool1-list"></div>
+  </div>
+
+  <div class="pool">
+    <h3>Pool 2</h3>
+    <div id="reg-pool2-list"></div>
+  </div>
+
+  <button onclick="closeRegistration()" style="margin-top:12px;">Close Registration &amp; Generate Schedule</button>
+</div>
+
+<!-- 2. Idle view (config-mode only) -->
+<div id="idle-view" style="display:none;">
+  <div class="pool"><h3>Pool 1</h3><div id="pool1-info"></div></div>
+  <div class="pool"><h3>Pool 2</h3><div id="pool2-info"></div></div>
+  <button onclick="startTournament()">Start Tournament</button>
+</div>
+
+<!-- 3. Schedule view (live_pool_play | grand_final) -->
+<div id="schedule-view" style="display:none;">
+  <div class="pool" id="admin-panel-1-wrap" style="display:none;">
+    <h3>Arena 1 -- Live Match Admin</h3>
+    <div id="admin-panel-1" class="admin-panel"></div>
+  </div>
+  <div class="pool" id="admin-panel-2-wrap" style="display:none;">
+    <h3>Arena 2 -- Live Match Admin</h3>
+    <div id="admin-panel-2" class="admin-panel"></div>
+  </div>
+  <div class="pool" id="grand-final-pool" style="display:none;">
+    <h3>Grand Final</h3>
+    <div id="grand-final-schedule"></div>
+  </div>
+  <div class="pool">
+    <h3>Pool 1 Schedule</h3>
+    <div id="pool1-schedule"></div>
+  </div>
+  <div class="pool">
+    <h3>Pool 2 Schedule</h3>
+    <div id="pool2-schedule"></div>
+  </div>
+</div>
+
+<!-- 4. Match-assign popup (modal overlay, triggered by clicking a Ready match) -->
+<div id="match-popup-overlay">
+  <div id="match-popup">
+    <h3 id="popup-arena-label">Assign Match</h3>
+    <div class="popup-mac-row">
+      <label id="popup-mac-a-label">Team A MAC address</label>
+      <input type="text" id="popup-mac-a" class="waiting" placeholder="aa:bb:cc:dd:ee:ff">
+      <div class="join-status-label" id="popup-mac-a-status">not yet joined</div>
+    </div>
+    <div class="popup-mac-row">
+      <label id="popup-mac-b-label">Team B MAC address</label>
+      <input type="text" id="popup-mac-b" class="waiting" placeholder="aa:bb:cc:dd:ee:ff">
+      <div class="join-status-label" id="popup-mac-b-status">not yet joined</div>
+    </div>
+    <div class="puzzle-choice">
+      <label>Who solved the puzzle first?</label>
+      <button class="team-btn selected" id="puzzle-btn-a" onclick="selectPuzzleWinner('a')"></button>
+      <button class="team-btn" id="puzzle-btn-b" onclick="selectPuzzleWinner('b')"></button>
+    </div>
+    <div class="popup-force-row">
+      <label><input type="checkbox" id="popup-force-start"> Start anyway even if a team hasn't joined (manual MAC entry fallback)</label>
+    </div>
+    <div class="popup-actions">
+      <button onclick="submitMatch()">Start Match</button>
+      <button onclick="closePopup()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- 5. Champion view -->
+<div id="champion-view" style="display:none;">
+  <h3>Tournament complete</h3>
+  <p id="champion-text"></p>
+</div>
+
+<!-- 6. Raw state debug panel -->
+<h3>Raw state (debug)</h3>
+<div id="raw-state">connecting...</div>
+
+<script>
+// ── Popup state ──────────────────────────────────────────────────────────────
+let popupTeamA = '';
+let popupTeamB = '';
+let popupArenaNum = 1;
+let puzzleWinnerSide = 'a'; // 'a' or 'b'
+
+function selectPuzzleWinner(side) {
+  puzzleWinnerSide = side;
+  document.getElementById('puzzle-btn-a').classList.toggle('selected', side === 'a');
+  document.getElementById('puzzle-btn-b').classList.toggle('selected', side === 'b');
+}
+
+let joinPollTimer = null;
+
+function applyJoinStatus(fieldId, statusId, teamName, joinStatus) {
+  const input = document.getElementById(fieldId);
+  const status = document.getElementById(statusId);
+  const info = joinStatus[teamName];
+  if (info) {
+    if (document.activeElement !== input) {
+      input.value = info.mac;
+    }
+    input.classList.remove('waiting');
+    input.classList.add('joined');
+    status.textContent = `auto-filled, joined ${info.seconds_ago}s ago`;
+  } else {
+    input.classList.remove('joined');
+    input.classList.add('waiting');
+    status.textContent = 'not yet joined';
+  }
+}
+
+async function pollJoinStatus() {
+  const response = await fetch('/api/join-status');
+  if (!response.ok) return;
+  const joinStatus = await response.json();
+  applyJoinStatus('popup-mac-a', 'popup-mac-a-status', popupTeamA, joinStatus);
+  applyJoinStatus('popup-mac-b', 'popup-mac-b-status', popupTeamB, joinStatus);
+}
+
+function openMatchPopup(arenaLabel, arenaNum, teamA, teamB) {
+  if (joinPollTimer) { clearInterval(joinPollTimer); joinPollTimer = null; }
+  popupTeamA = teamA;
+  popupTeamB = teamB;
+  popupArenaNum = arenaNum;
+  puzzleWinnerSide = 'a';
+
+  document.getElementById('popup-arena-label').textContent = `Assign Match — ${arenaLabel}`;
+  document.getElementById('popup-mac-a-label').textContent = `${teamA} MAC address`;
+  document.getElementById('popup-mac-b-label').textContent = `${teamB} MAC address`;
+  document.getElementById('popup-mac-a').value = '';
+  document.getElementById('popup-mac-b').value = '';
+  document.getElementById('popup-mac-a').classList.add('waiting');
+  document.getElementById('popup-mac-a').classList.remove('joined');
+  document.getElementById('popup-mac-b').classList.add('waiting');
+  document.getElementById('popup-mac-b').classList.remove('joined');
+  document.getElementById('popup-mac-a-status').textContent = 'not yet joined';
+  document.getElementById('popup-mac-b-status').textContent = 'not yet joined';
+  document.getElementById('popup-force-start').checked = false;
+  document.getElementById('puzzle-btn-a').textContent = teamA;
+  document.getElementById('puzzle-btn-b').textContent = teamB;
+  selectPuzzleWinner('a');
+
+  document.getElementById('match-popup-overlay').classList.add('visible');
+
+  pollJoinStatus();
+  joinPollTimer = setInterval(pollJoinStatus, 1000);
+}
+
+function closePopup() {
+  document.getElementById('match-popup-overlay').classList.remove('visible');
+  if (joinPollTimer) {
+    clearInterval(joinPollTimer);
+    joinPollTimer = null;
+  }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+async function reportIfFailed(response, actionLabel) {
+  if (!response.ok) {
+    const text = await response.text();
+    alert(`${actionLabel} failed (HTTP ${response.status}): ${text}`);
+  }
+  return response.ok;
+}
+
+// ── Registration actions ─────────────────────────────────────────────────────
+function addStudentField() {
+  const container = document.getElementById('student-inputs');
+  const count = container.querySelectorAll('input').length + 1;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'student-input';
+  input.placeholder = `Student ${count} name`;
+  container.appendChild(input);
+}
+
+async function registerTeam() {
+  const nameInput = document.getElementById('reg-team-name');
+  const name = nameInput.value.trim();
+  if (!name) { alert('Enter a team name.'); return; }
+
+  const students = Array.from(document.querySelectorAll('.student-input'))
+    .map(i => i.value.trim())
+    .filter(s => s.length > 0);
+
+  const response = await fetch('/api/register-team', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, students }),
+  });
+  if (await reportIfFailed(response, 'Register Team')) {
+    nameInput.value = '';
+    const container = document.getElementById('student-inputs');
+    container.innerHTML = '<input type="text" class="student-input" placeholder="Student 1 name">';
+  }
+}
+
+async function moveTeam(teamName, toPool) {
+  const response = await fetch('/api/move-team', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: teamName, to_pool: toPool }),
+  });
+  await reportIfFailed(response, 'Move Team');
+}
+
+async function closeRegistration() {
+  const response = await fetch('/api/close-registration', { method: 'POST' });
+  await reportIfFailed(response, 'Close Registration');
+}
+
+// ── Idle / config-mode actions ───────────────────────────────────────────────
+async function startTournament() {
+  const response = await fetch('/api/start-tournament', { method: 'POST' });
+  await reportIfFailed(response, 'Start Tournament');
+}
+
+// ── Match submit ─────────────────────────────────────────────────────────────
+async function submitMatch() {
+  const macA = document.getElementById('popup-mac-a').value.trim();
+  const macB = document.getElementById('popup-mac-b').value.trim();
+  if (!macA || !macB) { alert('Enter MAC addresses for both teams.'); return; }
+
+  const force = document.getElementById('popup-force-start').checked;
+  const winner = puzzleWinnerSide === 'a' ? popupTeamA : popupTeamB;
+  const response = await fetch('/api/start-match', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ arena: popupArenaNum, winner, team_a_mac: macA, team_b_mac: macB, force }),
+  });
+  if (await reportIfFailed(response, 'Start Match')) {
+    closePopup();
+  }
+}
+
+// ── Live match admin overrides ────────────────────────────────────────────────
+async function postAdmin(path, body) {
+  const response = await fetch(`/api/admin/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  await reportIfFailed(response, `Admin: ${path}`);
+}
+
+function adminSetScore(arenaNum, team) {
+  const input = document.getElementById(`admin-score-${arenaNum}-${team}`);
+  const score = parseInt(input.value, 10);
+  if (Number.isNaN(score)) { alert('Enter a whole number score.'); return; }
+  postAdmin('set-score', { arena: arenaNum, team, score });
+}
+
+function adminPause(arenaNum) { postAdmin('pause', { arena: arenaNum }); }
+function adminResume(arenaNum) { postAdmin('resume', { arena: arenaNum }); }
+
+function adminStop(arenaNum) {
+  if (!confirm(`Stop this match on Arena ${arenaNum}? No result will be recorded -- you will need to re-trigger the same matchup to replay it.`)) return;
+  postAdmin('stop', { arena: arenaNum });
+}
+
+function adminFinish(arenaNum) {
+  if (!confirm(`End this match on Arena ${arenaNum} now? Whoever is currently ahead will be declared the winner.`)) return;
+  postAdmin('finish', { arena: arenaNum });
+}
+
+/// Renders (or hides) one arena's persistent admin panel. `liveState` is
+/// the arena's `LiveArenaState` (from `state.arena1`/`arena2`, or
+/// `state.arena` during the Grand Final) -- null/undefined means no live
+/// match on this arena right now.
+function renderAdminPanel(arenaNum, liveState) {
+  const wrap = document.getElementById(`admin-panel-${arenaNum}-wrap`);
+  const container = document.getElementById(`admin-panel-${arenaNum}`);
+  if (!liveState) {
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = 'block';
+
+  const pausedBadge = liveState.is_paused ? '<span class="admin-paused-badge">PAUSED</span>' : '';
+  const scoreRows = Object.entries(liveState.scores).map(([team, score]) => `
+    <div class="admin-score-row">
+      <span>${team}: ${score}</span>
+      <input type="number" id="admin-score-${arenaNum}-${team}" value="${score}">
+      <button onclick="adminSetScore(${arenaNum}, '${team}')">Set</button>
+    </div>
+  `).join('');
+
+  container.innerHTML = `
+    <div class="admin-scores">${scoreRows}${pausedBadge}</div>
+    <div class="admin-actions">
+      ${liveState.is_paused
+        ? `<button onclick="adminResume(${arenaNum})">Resume</button>`
+        : `<button onclick="adminPause(${arenaNum})">Pause</button>`}
+      <button class="danger" onclick="adminStop(${arenaNum})">Stop (void)</button>
+      <button class="danger" onclick="adminFinish(${arenaNum})">Finish Now</button>
+    </div>
+  `;
+}
+
+// ── Schedule rendering ───────────────────────────────────────────────────────
+function renderSchedule(containerId, entries, poolLabel, arenaNum) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  if (!entries || entries.length === 0) {
+    container.textContent = 'No matches scheduled yet.';
+    return;
+  }
+  entries.forEach((entry, idx) => {
+    const div = document.createElement('div');
+    div.className = 'schedule-entry';
+
+    let label;
+    if (entry.status === 'complete') {
+      label = `${entry.team_a} vs ${entry.team_b} — complete (${entry.winner} won)`;
+      div.classList.add('disabled-entry');
+    } else {
+      label = `${entry.team_a} vs ${entry.team_b} — ${entry.status}`;
+      if (entry.status === 'ready') {
+        div.classList.add('ready');
+        div.title = 'Click to assign and start this match';
+        div.addEventListener('click', () => {
+          openMatchPopup(`${poolLabel} match ${idx + 1}`, arenaNum, entry.team_a, entry.team_b);
+        });
+      } else {
+        div.classList.add('disabled-entry');
+      }
+    }
+
+    div.textContent = label;
+    container.appendChild(div);
+  });
+}
+
+// ── Registration pool lists ──────────────────────────────────────────────────
+function renderRegPool(containerId, poolReg, otherPool) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  if (!poolReg || poolReg.teams.length === 0) {
+    container.textContent = 'No teams yet.';
+    return;
+  }
+  poolReg.teams.forEach(team => {
+    const row = document.createElement('div');
+    row.className = 'team-row';
+
+    const span = document.createElement('span');
+    const studentsText = team.students && team.students.length > 0
+      ? ` (${team.students.join(', ')})` : '';
+    span.textContent = `${team.name}${studentsText} — secret: ${team.secret}`;
+    row.appendChild(span);
+
+    const btn = document.createElement('button');
+    btn.textContent = `Move to Pool ${otherPool}`;
+    btn.style.fontSize = '13px';
+    btn.style.padding = '4px 10px';
+    btn.onclick = () => moveTeam(team.name, otherPool);
+    row.appendChild(btn);
+
+    container.appendChild(row);
+  });
+}
+
+// ── Main render ──────────────────────────────────────────────────────────────
+function render(state) {
+  document.getElementById('raw-state').textContent = JSON.stringify(state, null, 2);
+
+  const isReg = state.phase === 'registration';
+  const isIdle = state.phase === 'idle';
+  const isSchedule = state.phase === 'live_pool_play' || state.phase === 'grand_final';
+  const isChampion = state.phase === 'champion';
+
+  document.getElementById('registration-view').style.display = isReg ? 'block' : 'none';
+  document.getElementById('idle-view').style.display = isIdle ? 'block' : 'none';
+  document.getElementById('schedule-view').style.display = isSchedule ? 'block' : 'none';
+  document.getElementById('champion-view').style.display = isChampion ? 'block' : 'none';
+
+  if (isReg) {
+    renderRegPool('reg-pool1-list', state.pool1, 2);
+    renderRegPool('reg-pool2-list', state.pool2, 1);
+  }
+
+  if (isIdle) {
+    document.getElementById('pool1-info').textContent =
+      `${state.pool1.teams.join(', ')} (${state.pool1.total_matches} matches)`;
+    document.getElementById('pool2-info').textContent =
+      `${state.pool2.teams.join(', ')} (${state.pool2.total_matches} matches)`;
+  }
+
+  if (state.phase === 'live_pool_play') {
+    renderAdminPanel(1, state.arena1);
+    renderAdminPanel(2, state.arena2);
+  } else if (state.phase === 'grand_final') {
+    renderAdminPanel(1, state.arena_num === 1 ? state.arena : null);
+    renderAdminPanel(2, state.arena_num === 2 ? state.arena : null);
+  } else {
+    renderAdminPanel(1, null);
+    renderAdminPanel(2, null);
+  }
+
+  if (isSchedule) {
+    renderSchedule('pool1-schedule', state.pool1_schedule, 'Pool 1', 1);
+    renderSchedule('pool2-schedule', state.pool2_schedule, 'Pool 2', 2);
+
+    // Neither pool's own schedule ever contains the Grand Final -- it's
+    // decided separately once both pools finish. Without rendering it
+    // here as its own Ready row, there is no way to open the assign
+    // popup for it and the Master stalls waiting on a submission the UI
+    // never offers.
+    const gfPool = document.getElementById('grand-final-pool');
+    if (state.grand_final_ready) {
+      gfPool.style.display = 'block';
+      renderSchedule('grand-final-schedule', [{
+        team_a: state.grand_final_ready.team_a,
+        team_b: state.grand_final_ready.team_b,
+        status: 'ready',
+      }], 'Grand Final', state.grand_final_ready.arena);
+    } else {
+      gfPool.style.display = 'none';
+    }
+  }
+
+  if (isChampion) {
+    const thirdPlaceText = state.third_place ? `, 3rd place: ${state.third_place}` : '';
+    document.getElementById('champion-text').textContent =
+      `${state.winner} wins! Pool 1 winner: ${state.pool1_winner}, Pool 2 winner: ${state.pool2_winner}${thirdPlaceText}`;
+  }
+}
+
+// ── WebSocket ────────────────────────────────────────────────────────────────
+let retryDelaySeconds = 1;
+
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = (event) => {
+    retryDelaySeconds = 1;
+    render(JSON.parse(event.data));
+  };
+  ws.onclose = () => {
+    document.getElementById('raw-state').textContent =
+      `Disconnected from Master -- reconnecting in ${retryDelaySeconds}s...`;
+    setTimeout(connect, retryDelaySeconds * 1000);
+    retryDelaySeconds = Math.min(retryDelaySeconds * 2, 30);
+  };
+}
+
+connect();
+</script>
+</body>
+</html>
