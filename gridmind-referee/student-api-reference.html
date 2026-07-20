@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GridMind — Student API Reference: Talking to the Referee Board</title>
+<style>
+  body { font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; line-height: 1.5; color: #222; }
+  h1 { border-bottom: 2px solid #333; padding-bottom: 8px; }
+  h2 { margin-top: 40px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+  h3 { margin-top: 24px; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th, td { border: 1px solid #bbb; padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #f0f0f0; }
+  pre { background: #f7f7f7; border: 1px solid #ddd; padding: 12px; overflow-x: auto; }
+  code { font-family: "SF Mono", Consolas, monospace; }
+  .status { font-style: italic; color: #555; }
+  .warn { background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px 16px; margin: 16px 0; }
+  .send { color: #8e44ad; font-weight: bold; }
+  .recv { color: #16a085; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>GridMind — Student API Reference: Talking to the Referee Board</h1>
+<p class="status">Status: current as of 2026-07-15, verified directly against <code>gridmind-referee/src/messages.rs</code> (the actual, tested wire protocol). Every message shape below is exactly what the referee sends/expects — not an approximation. Updated for the hint system redesign: <code>pregame_riddle</code> and <code>free_hint_fragment</code> are new; <code>hint_response</code>'s shape changed from a text <code>riddle</code> field to two digit images.</p>
+
+<div class="warn">
+  <strong>⚠️ If you've seen <code>gridmind_client.py</code> in this repo:</strong> it is <strong>out of date</strong>. It was written for an earlier version of the protocol (before the referee moved to the claim-based comparison and before hints existed) and does not match what's described here. Use raw <code>pynqp2p</code> calls with the JSON shapes below until it's updated.
+</div>
+
+<h2>1. Connecting</h2>
+<pre><code>import pynqp2p
+
+pynqp2p.register("192.168.1.100:5000", "bootcamp2024")   # server IP:port + shared key, from the RC team
+my_id = pynqp2p.get_id()                                   # your board's MAC address
+print(f"My board ID: {my_id}")   # share this with the RC team so they can register you</code></pre>
+<p>Every message you send goes to <strong>your arena's referee board ID</strong> (given to you by the RC team when your match is set up) via <code>pynqp2p.send(referee_id, json_string)</code>. You read your own inbox with <code>pynqp2p.receive_all()</code>, which returns a list of raw JSON strings (drains your queue — each message is delivered once). You never talk to the other team's board or to the Master directly — everything routes through your Arena Agent.</p>
+<pre><code>import json
+
+def send_to_referee(referee_id, msg: dict):
+    pynqp2p.send(referee_id, json.dumps(msg))
+
+def poll():
+    return [json.loads(raw) for raw in pynqp2p.receive_all()]</code></pre>
+
+<h2>2. Stage 1 — Pre-Game Window</h2>
+<p>Two things happen here, both before <code>game_start</code>. You never send anything to the referee during this stage — both mechanics are receive-only from your side.</p>
+
+<h3>2a. Pre-game riddle (decides who goes first)</h3>
+<table>
+<tr><th>Direction</th><th>Message</th><th>Meaning</th></tr>
+<tr><td class="recv">RECEIVE</td><td><code>{"type":"pregame_riddle","riddle":"I have cities but no houses..."}</code></td><td>Sent to both teams identically. You have about 2 minutes — feed it to your own LLM.</td></tr>
+</table>
+<p><strong>Judging is entirely manual.</strong> There is no wire message for submitting an answer — whichever team calls out the correct answer first tells the human operator out loud, and the operator records the winner. The team that solves it first goes first (reflected in <code>game_start</code>'s <code>teams</code> order below).</p>
+
+<h3>2b. Free hint (shared, non-competitive)</h3>
+<p>Right after the riddle stage, both teams receive the same hint about one real object+location on the actual match grid — split into several QR-coded fragments you assemble yourself, identically to physically scanning printed cards with your camera:</p>
+<table>
+<tr><th>Direction</th><th>Message</th><th>Meaning</th></tr>
+<tr><td class="recv">RECEIVE</td><td><code>{"type":"free_hint_fragment","index":0,"total":3,"qr_png_base64":"..."}</code></td><td>One fragment of the shared hint. Sent once per fragment (<code>index</code> 0..<code>total</code>-1), identically to both teams. Decode each QR image yourself (e.g. via OpenCV against the base64-decoded PNG) and concatenate them in order — the assembled text is still a riddle, not a literal answer, describing an object and its rough grid quadrant.</td></tr>
+</table>
+
+<h2>3. Stage 2 — Match Start</h2>
+<p>Once your Arena Agent has both teams ready, you'll receive:</p>
+<table>
+<tr><th>Direction</th><th>Message</th><th>Meaning</th></tr>
+<tr><td class="recv">RECEIVE</td><td><code>{"type":"game_start","teams":["alpha","beta"],"total_pairs":15}</code></td><td>Match is starting. <code>teams</code> lists both team names in turn order (whoever's first here goes first).</td></tr>
+<tr><td class="recv">RECEIVE</td><td><code>{"type":"your_turn","flip_num":1}</code></td><td>It's your turn — go ahead and flip.</td></tr>
+<tr><td class="recv">RECEIVE</td><td><code>{"type":"wait","active_team":"beta"}</code></td><td>Not your turn. Keep watching <code>card_revealed</code> broadcasts (below) to build your own memory of the board.</td></tr>
+</table>
+
+<h2>3. Stage 3 — Your Turn: Flip, Detect, Compare, Report</h2>
+<p>This is the core loop. <strong>Key idea: you compare your own two detections yourself</strong> and submit a single claim — the referee validates it against its own golden answer key, it doesn't run its own vision model.</p>
+
+<h3>Step-by-step</h3>
+<ol>
+<li>Choose a position, send a flip request:
+<pre><code class="send">send_to_referee(referee_id, {"type": "flip", "team": "alpha", "pos": "B3"})</code></pre>
+</li>
+<li>Wait — a <strong>human referee physically flips the real card</strong>. This takes a moment; don't assume it's flipped until you get the next message.</li>
+<li>You'll receive a broadcast (sent to <strong>both</strong> teams, always, regardless of whose turn it is):
+<pre><code class="recv">{"type": "card_revealed", "pos": "B3"}</code></pre>
+Notice: <strong>no class label is included.</strong> You must run your own vision model on your own camera frame to identify what's there.</li>
+<li>Run your detection, log it locally — nothing sent yet:
+<pre><code>cls1, conf1 = run_your_model(camera_frame)</code></pre>
+</li>
+<li>If this was your first flip this turn: choose your second position, repeat steps 1-4 for it (<code>cls2</code>).</li>
+<li><strong>Compare <code>cls1</code> vs <code>cls2</code> yourself.</strong> Decide: do they match?</li>
+<li>Submit your combined claim in one message:
+<pre><code class="send">send_to_referee(referee_id, {
+    "type": "report_result",
+    "team": "alpha",
+    "pos1": "B3", "pos2": "D5",
+    "cls1": "dog", "cls2": "dog",
+    "claim": "match"   # or "no_match"
+})</code></pre>
+</li>
+<li>You'll get back exactly one of these:
+<table>
+<tr><th>Message</th><th>What happened</th></tr>
+<tr><td><code>{"type":"match","cls":"dog","pos1":"B3","pos2":"D5","scorer":"alpha","scores":{"alpha":3,"beta":2},"remaining":6}</code></td><td>Your claim was correct! Points awarded (streak scoring: 1st match in a row = +1, 2nd = +2 more, etc.). <strong>Your turn continues</strong> — loop back to choosing a card.</td></tr>
+<tr><td><code>{"type":"no_match","pos1":"B3","pos2":"D5","cls1":"dog","cls2":"cat","scores":{"alpha":2,"beta":2}}</code></td><td>Either you claimed "match" and were wrong (-1 point — the <code>cls1</code>/<code>cls2</code> here are the <strong>golden truth</strong>, telling you what you actually misdetected), or you claimed "no_match" (no penalty). Either way, <strong>your turn is over.</strong></td></tr>
+<tr><td><code>{"type":"invalid","reason":"Position 'B3' already matched"}</code></td><td>Sent right after a bad <code>flip</code> request (already-matched position, already-flipped-this-turn position, or a position not on the grid). Pick a different position.</td></tr>
+</table>
+</li>
+</ol>
+
+<h3>Alternative: flip both cards in one request</h3>
+<p>Instead of two sequential <code>flip</code> round-trips, you can request both of your turn's positions at once. This is <strong>only valid as your turn's first action</strong> — you can't mix the two protocols mid-turn (e.g. one single <code>flip</code> followed by a <code>flip_both</code>).</p>
+<pre><code class="send">send_to_referee(referee_id, {"type": "flip_both", "team": "alpha", "pos1": "B3", "pos2": "D5"})</code></pre>
+<p>Validation is <strong>atomic</strong>: if either position is invalid (already matched, off-grid, or the same position twice), you get a single <code>invalid</code> reply and <strong>neither</strong> card is revealed — nothing to undo, just fix the bad position and resend. On success you get two separate <code>card_revealed</code> broadcasts (one per position, same shape as the single-flip flow), then everything from "Run your detection" onward is identical to the step-by-step above.</p>
+<div class="warn">Both protocols are fully supported side by side — pick whichever works better for your team. <code>flip_both</code> exists to cut the round-trip and vision-detection time that used to sit between your two flips (the referee no longer waits on your first card's detection before the second card can be physically flipped), so it may meaningfully reduce your total match time.</div>
+
+<h3>While it's NOT your turn</h3>
+<p>You still receive every <code>card_revealed</code> broadcast from the other team's flips. <strong>Run your own detection on those too and remember them</strong> — this is free intel for your own future turns. Per the game's shared-visibility rule, both teams always see every card that's ever flipped, whoever's turn it was.</p>
+
+<h2>4. Stage 4 — Hints (optional, only during YOUR active turn)</h2>
+<p>Ask for a hint about a specific object you're trying to locate:</p>
+<pre><code class="send">send_to_referee(referee_id, {"type": "hint_request", "team": "alpha", "object": "boat"})</code></pre>
+<table>
+<tr><th>Response</th><th>Meaning</th></tr>
+<tr><td><code>{"type":"hint_response","row_digit_png_base64":"...","col_digit_png_base64":"..."}</code></td><td>Accepted. Two small hand-drawn-style digit images (base64-encoded PNGs), one for the row number and one for the column number — read them yourself (or build a tiny classifier) rather than a string handed to you outright. Row letters map to numbers the same way A=1, B=2, etc. <strong>Costs 1 point.</strong></td></tr>
+<tr><td><code>{"type":"hint_rejected","reason":"object already fully resolved"}</code></td><td>Both cards of that object have already been revealed to someone this match — check your own <code>card_revealed</code> memory, you may already know where it is. <strong>Still costs 1 point.</strong></td></tr>
+<tr><td><code>{"type":"hint_rejected","reason":"unknown object"}</code></td><td>The object name you sent doesn't match any class on this grid — matching is exact and <strong>case-sensitive</strong> (<code>"Dog"</code> ≠ <code>"dog"</code>). A typo here silently costs a point same as any other rejection. <strong>Still costs 1 point.</strong></td></tr>
+<tr><td><em>(no response at all)</em></td><td>Silently refused: either your score is ≤ 0, or you've already used both your hint attempts this match. <strong>No cost</strong> for a silently-refused request.</td></tr>
+</table>
+<p>Cap: at most <strong>2 hint attempts per match count against you</strong> (accepted or rejected both count against the cap; silently-refused ones don't).</p>
+
+<h2>5. Stage 5 — Game Over</h2>
+<pre><code class="recv">{"type": "game_over", "winner": "alpha", "scores": {"alpha": 9, "beta": 6}}</code></pre>
+<p>The match is done. If your team advances (through pool round-robin, or into the Grand Final), you'll get a fresh <code>game_start</code> for the next match on the <strong>same connection</strong> — no need to re-register.</p>
+
+<h2>Optional: Genesis Simulated Robot Arm</h2>
+<div class="warn">This is <strong>purely cosmetic</strong> and completely separate from everything above. It never talks to the referee, never affects your score, and is entirely optional — skip this section if you just want to compete.</div>
+<p>If you want your board to visually control a simulated robot arm while it plays (for fun, not function), connect directly to the Genesis simulation server — this is a <strong>separate HTTP connection</strong>, not routed through <code>pynqp2p</code> or the referee at all:</p>
+<pre><code>from pynqsim import SimulationClient
+
+sim = SimulationClient(genesis_server_ip, 9005)   # ask the RC team for the IP
+sim.join_competition(team_id="team_red")           # or "team_blue"</code></pre>
+<p>Whenever you send a real <code>flip</code> or <code>flip_both</code> to the referee, you can optionally also tell Genesis to move the arm to the same position, purely for visual effect:</p>
+<pre><code class="send">send_to_referee(referee_id, {"type": "flip", "team": "alpha", "pos": "B3"})   # the real move
+sim.flip_card(row=1, col=2)                                                    # cosmetic only</code></pre>
+<p>The referee's decision about whether cards match is based <strong>only</strong> on the <code>report_result</code> claim you send it, exactly as described above — Genesis has no say in it, and a Genesis call failing or being skipped never affects your match.</p>
+
+<h2>Full Message Reference</h2>
+
+<h3>Messages you SEND to the referee</h3>
+<table>
+<tr><th>Type</th><th>Fields</th><th>When</th></tr>
+<tr><td><code>flip</code></td><td><code>team, pos</code></td><td>Choosing a card to flip, on your turn</td></tr>
+<tr><td><code>flip_both</code></td><td><code>team, pos1, pos2</code></td><td>Alternative to two sequential <code>flip</code> calls — both positions at once, atomic validation. Only valid as the first action of a turn.</td></tr>
+<tr><td><code>report_result</code></td><td><code>team, pos1, pos2, cls1, cls2, claim</code></td><td>After detecting both of your flipped cards, submitting your own match/no_match comparison</td></tr>
+<tr><td><code>hint_request</code></td><td><code>team, object</code></td><td>Optional, only during your active turn</td></tr>
+</table>
+
+<h3>Messages you RECEIVE from the referee</h3>
+<table>
+<tr><th>Type</th><th>Fields</th><th>Meaning</th></tr>
+<tr><td><code>pregame_riddle</code></td><td><code>riddle</code></td><td>Pre-game, both teams identically — decides who goes first (judged manually, no answer message exists)</td></tr>
+<tr><td><code>free_hint_fragment</code></td><td><code>index, total, qr_png_base64</code></td><td>Pre-game, both teams identically — assemble every fragment yourself</td></tr>
+<tr><td><code>game_start</code></td><td><code>teams, total_pairs</code></td><td>Match beginning</td></tr>
+<tr><td><code>your_turn</code></td><td><code>flip_num</code></td><td>It's your turn</td></tr>
+<tr><td><code>wait</code></td><td><code>active_team</code></td><td>Not your turn — but still watch for <code>card_revealed</code></td></tr>
+<tr><td><code>card_revealed</code></td><td><code>pos</code></td><td>Broadcast to both teams on every physical flip — no class label, run your own model</td></tr>
+<tr><td><code>invalid</code></td><td><code>reason</code></td><td>Your last <code>flip</code> request was rejected</td></tr>
+<tr><td><code>match</code></td><td><code>cls, pos1, pos2, scorer, scores, remaining</code></td><td>A claimed match was confirmed correct</td></tr>
+<tr><td><code>no_match</code></td><td><code>pos1, pos2, cls1, cls2, scores</code></td><td>Turn ended — wrong claim (penalty) or genuinely no match (no penalty)</td></tr>
+<tr><td><code>hint_response</code></td><td><code>row_digit_png_base64, col_digit_png_base64</code></td><td>Paid hint accepted — two digit images, not text</td></tr>
+<tr><td><code>hint_rejected</code></td><td><code>reason</code></td><td>Paid hint rejected (still costs the point) — <code>"object already fully resolved"</code> or <code>"unknown object"</code></td></tr>
+<tr><td><code>game_over</code></td><td><code>winner, scores</code></td><td>Match complete</td></tr>
+</table>
+
+<h2>Complete Example: a Minimal Turn Loop</h2>
+<pre><code>import pynqp2p, json, time
+
+pynqp2p.register("192.168.1.100:5000", "bootcamp2024")
+MY_TEAM = "alpha"
+REFEREE_ID = "aa:bb:cc:dd:ee:ff"  # given to you by the RC team
+
+def send(msg):
+    pynqp2p.send(REFEREE_ID, json.dumps(msg))
+
+def poll():
+    return [json.loads(raw) for raw in pynqp2p.receive_all()]
+
+board_memory = {}  # pos -> class, built from every card_revealed you see
+
+def wait_for(*types, timeout=65):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for msg in poll():
+            if msg["type"] == "card_revealed":
+                # runs for EVERY flip, yours or theirs
+                board_memory[msg["pos"]] = run_your_model(get_camera_frame())
+            if msg["type"] in types:
+                return msg
+        time.sleep(0.2)
+    raise TimeoutError(f"no {types} within {timeout}s")
+
+while True:
+    turn_msg = wait_for("your_turn", "game_over")
+    if turn_msg["type"] == "game_over":
+        print("Game over:", turn_msg)
+        break
+
+    pos1 = choose_a_position(board_memory)   # your own strategy logic
+    send({"type": "flip", "team": MY_TEAM, "pos": pos1})
+    wait_for("card_revealed")                # already updates board_memory[pos1]
+    cls1 = board_memory[pos1]
+
+    pos2 = choose_a_position(board_memory, exclude=pos1)
+    send({"type": "flip", "team": MY_TEAM, "pos": pos2})
+    wait_for("card_revealed")
+    cls2 = board_memory[pos2]
+
+    claim = "match" if cls1 == cls2 else "no_match"
+    send({
+        "type": "report_result", "team": MY_TEAM,
+        "pos1": pos1, "pos2": pos2, "cls1": cls1, "cls2": cls2, "claim": claim,
+    })
+    result = wait_for("match", "no_match")
+    print(result)
+    # loop continues: if "match", you'll get another your_turn; if "no_match",
+    # you'll get "wait" until it's your turn again.</code></pre>
+
+</body>
+</html>
