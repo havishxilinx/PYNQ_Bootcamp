@@ -173,12 +173,13 @@ class GenesisRequestHandler(BaseHTTPRequestHandler):
 
     def _create_env(self, params: Dict[str, Any]) -> Dict[str, Any]:
         scene_name = params.get("scene", "empty")
+        card_layout = params.get("card_layout")
         token = self.session_manager.create_session(scene_name)
 
         if not token:
             raise ValueError("Server at capacity, try again later")
 
-        sim = GenesisSimulation(scene_name)
+        sim = GenesisSimulation(scene_name, card_layout=card_layout)
         sim.build()
         self.simulations[token] = sim
 
