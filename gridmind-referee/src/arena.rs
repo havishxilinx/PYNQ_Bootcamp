@@ -54,12 +54,20 @@ pub fn run_arena(
     master_id: &str,
     arena_num: u32,
     genesis_url: Option<String>,
+    genesis_admin_password: String,
 ) -> Result<()> {
     let client = P2pClient::new(server, key, my_id);
     let genesis = genesis_url.map(|url| GenesisClient::new(&url));
     loop {
         let assignment = wait_for_assignment(&client)?;
-        run_one_match(&client, master_id, arena_num, assignment, genesis.as_ref())?;
+        run_one_match(
+            &client,
+            master_id,
+            arena_num,
+            assignment,
+            genesis.as_ref(),
+            &genesis_admin_password,
+        )?;
     }
 }
 
@@ -109,6 +117,7 @@ fn run_one_match(
     arena_num: u32,
     assignment: AssignedMatch,
     genesis: Option<&GenesisClient>,
+    genesis_admin_password: &str,
 ) -> Result<()> {
     let pool_num = assignment.pool;
     let grid = load_grid(&assignment.grid_id)?;
@@ -125,20 +134,32 @@ fn run_one_match(
             (assignment.team_a.clone(), assignment.team_a_id.clone()),
         ]
     };
-    let genesis_token = genesis.and_then(|g| g.create_env(&grid));
+    if let Some(g) = genesis {
+        g.start_competition(genesis_admin_password, &grid);
+    }
     let mut state = GameState::new(teams.clone(), grid);
 
     let team_names: Vec<String> = teams.iter().map(|(name, _)| name.clone()).collect();
 
     let genesis_url = genesis.map(|g| g.base_url().to_string());
     for (robot_id, (_, id)) in teams.iter().enumerate() {
+        // Genesis's competition mode only knows these two hardcoded team
+        // ids -- see `GameStart::genesis_team_id`'s doc comment.
+        let genesis_team_id = genesis.map(|_| {
+            if robot_id == 0 {
+                "team_red"
+            } else {
+                "team_blue"
+            }
+            .to_string()
+        });
         client.send(
             id,
             &serde_json::to_string(&RefereeMessage::GameStart {
                 teams: team_names.clone(),
                 total_pairs: state.total_pairs(),
                 robot_id: robot_id as u32,
-                genesis_token: genesis_token.clone(),
+                genesis_team_id,
                 genesis_url: genesis_url.clone(),
             })?,
         )?;
@@ -154,7 +175,7 @@ fn run_one_match(
                     MasterToArena::AdminResume => state.resume(Instant::now()),
                     MasterToArena::AdminStop => {
                         if let Some(g) = genesis {
-                            g.destroy_env(genesis_token.as_deref());
+                            g.stop_competition(genesis_admin_password);
                         }
                         return Ok(());
                     }
@@ -168,7 +189,7 @@ fn run_one_match(
                         };
                         client.send(master_id, &serde_json::to_string(&msg)?)?;
                         if let Some(g) = genesis {
-                            g.destroy_env(genesis_token.as_deref());
+                            g.stop_competition(genesis_admin_password);
                         }
                         return Ok(());
                     }
@@ -184,8 +205,6 @@ fn run_one_match(
                         state: &state,
                         now: Instant::now(),
                         puzzle_winner: &assignment.first_turn_team,
-                        genesis_token: genesis_token.as_deref(),
-                        genesis_url: genesis_url.as_deref(),
                     },
                 )?;
                 continue;
@@ -235,8 +254,6 @@ fn run_one_match(
                     state: &state,
                     now: Instant::now(),
                     puzzle_winner: &assignment.first_turn_team,
-                    genesis_token: genesis_token.as_deref(),
-                    genesis_url: genesis_url.as_deref(),
                 },
             )?;
         }
@@ -251,7 +268,7 @@ fn run_one_match(
             };
             client.send(master_id, &serde_json::to_string(&msg)?)?;
             if let Some(g) = genesis {
-                g.destroy_env(genesis_token.as_deref());
+                g.stop_competition(genesis_admin_password);
             }
             break;
         }
@@ -269,19 +286,22 @@ fn run_one_match(
 /// Groups `report_to_master`'s match-context parameters (as opposed to
 /// `client`/`master_id`, which are transport/routing concerns) into one
 /// struct -- this function's parameter list crossed clippy's
-/// `too_many_arguments` threshold once `genesis_token` was added, and a
-/// likely next addition (`genesis_url`, already carried by `GameStart`
-/// but not yet by `ScoreUpdate`) would push it further. A struct keeps
-/// future field additions a one-line change here instead of a change at
-/// every one of this function's three call sites.
+/// `too_many_arguments` threshold once Genesis fields were added here.
+/// A struct keeps future field additions a one-line change here instead
+/// of a change at every one of this function's three call sites.
+///
+/// Genesis fields are deliberately NOT included: they were only ever used
+/// to build the scoreboard's live video-stream URL, which only worked for
+/// Genesis's "standard mode" sessions. Competition mode (needed for real
+/// per-flip arm animation, see `GenesisClient::start_competition`) has no
+/// per-match token to stream from at all, so that embed is gone -- Genesis
+/// connection details now only flow to students directly via `GameStart`.
 struct MatchReport<'a> {
     arena: u32,
     pool: u32,
     state: &'a GameState,
     now: Instant,
     puzzle_winner: &'a str,
-    genesis_token: Option<&'a str>,
-    genesis_url: Option<&'a str>,
 }
 
 fn report_to_master(client: &P2pClient, master_id: &str, report: MatchReport) -> Result<()> {
@@ -313,8 +333,6 @@ fn report_to_master(client: &P2pClient, master_id: &str, report: MatchReport) ->
         match_started_at_unix_ms: report.state.match_started_at_unix_ms(),
         is_paused: report.state.is_paused(),
         flip_pending_positions: report.state.flip_pending_positions(),
-        genesis_token: report.genesis_token.map(|t| t.to_string()),
-        genesis_url: report.genesis_url.map(|u| u.to_string()),
     };
     client.send(master_id, &serde_json::to_string(&msg)?)
 }

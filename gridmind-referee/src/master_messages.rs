@@ -24,24 +24,13 @@ pub enum ArenaToMaster {
         puzzle_winner: String,
         match_started_at_unix_ms: u64,
         is_paused: bool,
-        /// `Some((pos1, pos2))` while the arena is waiting out the
-        /// physical flip delay for a revealed pair -- lets the
-        /// scoreboard show a "flip the card now" banner.
+        /// `Some((pos1, pos2))` from the moment a pair's second card is
+        /// revealed until its result is processed -- lets the scoreboard
+        /// show a "flip the card now" banner for the physical referee.
         // serde errors on a missing key for Option<T> without this -- older
         // arena binaries that predate this field omit it entirely.
         #[serde(default)]
         flip_pending_positions: Option<(String, String)>,
-        /// The Genesis session token for this arena's current match, if
-        /// Genesis is configured -- lets the scoreboard/arena UI embed a
-        /// live video feed. `None` when Genesis isn't configured.
-        #[serde(default)]
-        genesis_token: Option<String>,
-        /// Base URL of the Genesis server (e.g. `http://localhost:9002`),
-        /// forwarded to the arena UI so it can construct the MJPEG stream
-        /// URL without relying on a manually-specified query param.
-        /// `None` when Genesis isn't configured.
-        #[serde(default)]
-        genesis_url: Option<String>,
     },
     #[serde(rename = "match_result")]
     MatchResult {
@@ -156,54 +145,6 @@ mod tests {
                     flip_pending_positions,
                     Some(("B3".to_string(), "D5".to_string()))
                 );
-            }
-            other => panic!("expected ScoreUpdate, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn score_update_defaults_genesis_token_to_none_when_absent() {
-        let json = r#"{"type":"score_update","arena":1,"pool":1,"scores":{"alpha":5,"beta":3},"pairs_found":7,"total_pairs":15,"matched":{"A1":"dog"},"all_positions":["A1","A2"],"active_team":"alpha","turn_seconds_remaining":37,"streak":{"alpha":2,"beta":0},"hints_used":{"alpha":0,"beta":1},"puzzle_winner":"alpha","match_started_at_unix_ms":1784000000000,"is_paused":false}"#;
-        let msg: ArenaToMaster = serde_json::from_str(json).unwrap();
-        match msg {
-            ArenaToMaster::ScoreUpdate { genesis_token, .. } => {
-                assert_eq!(genesis_token, None);
-            }
-            other => panic!("expected ScoreUpdate, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn score_update_round_trips_genesis_token_when_present() {
-        let json = r#"{"type":"score_update","arena":1,"pool":1,"scores":{"alpha":5,"beta":3},"pairs_found":7,"total_pairs":15,"matched":{"A1":"dog"},"all_positions":["A1","A2"],"active_team":"alpha","turn_seconds_remaining":37,"streak":{"alpha":2,"beta":0},"hints_used":{"alpha":0,"beta":1},"puzzle_winner":"alpha","match_started_at_unix_ms":1784000000000,"is_paused":false,"genesis_token":"abc123"}"#;
-        let msg: ArenaToMaster = serde_json::from_str(json).unwrap();
-        match msg {
-            ArenaToMaster::ScoreUpdate { genesis_token, .. } => {
-                assert_eq!(genesis_token, Some("abc123".to_string()));
-            }
-            other => panic!("expected ScoreUpdate, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn score_update_defaults_genesis_url_to_none_when_absent() {
-        let json = r#"{"type":"score_update","arena":1,"pool":1,"scores":{"alpha":5,"beta":3},"pairs_found":7,"total_pairs":15,"matched":{"A1":"dog"},"all_positions":["A1","A2"],"active_team":"alpha","turn_seconds_remaining":37,"streak":{"alpha":2,"beta":0},"hints_used":{"alpha":0,"beta":1},"puzzle_winner":"alpha","match_started_at_unix_ms":1784000000000,"is_paused":false}"#;
-        let msg: ArenaToMaster = serde_json::from_str(json).unwrap();
-        match msg {
-            ArenaToMaster::ScoreUpdate { genesis_url, .. } => {
-                assert_eq!(genesis_url, None);
-            }
-            other => panic!("expected ScoreUpdate, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn score_update_round_trips_genesis_url_when_present() {
-        let json = r#"{"type":"score_update","arena":1,"pool":1,"scores":{"alpha":5,"beta":3},"pairs_found":7,"total_pairs":15,"matched":{"A1":"dog"},"all_positions":["A1","A2"],"active_team":"alpha","turn_seconds_remaining":37,"streak":{"alpha":2,"beta":0},"hints_used":{"alpha":0,"beta":1},"puzzle_winner":"alpha","match_started_at_unix_ms":1784000000000,"is_paused":false,"genesis_url":"http://localhost:9002"}"#;
-        let msg: ArenaToMaster = serde_json::from_str(json).unwrap();
-        match msg {
-            ArenaToMaster::ScoreUpdate { genesis_url, .. } => {
-                assert_eq!(genesis_url, Some("http://localhost:9002".to_string()));
             }
             other => panic!("expected ScoreUpdate, got {other:?}"),
         }

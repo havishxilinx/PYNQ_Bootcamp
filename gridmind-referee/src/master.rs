@@ -723,8 +723,6 @@ pub fn run_master(
                         match_started_at_unix_ms,
                         is_paused,
                         flip_pending_positions,
-                        genesis_token,
-                        genesis_url,
                     } => {
                         println!(
                             "[arena {arena}, pool {pool}] {pairs_found}/{total_pairs} pairs, scores: {scores:?}"
@@ -747,8 +745,6 @@ pub fn run_master(
                             match_started_at_unix_ms,
                             is_paused,
                             flip_pending_positions,
-                            genesis_token,
-                            genesis_url,
                         };
                         let (pool1_standings, pool2_standings, pool1_schedule, pool2_schedule) = {
                             let t = tournament.lock().expect("tournament lock poisoned");
@@ -1683,8 +1679,6 @@ mod master_state_tests {
             match_started_at_unix_ms: 1_800_000_000_000,
             is_paused: false,
             flip_pending_positions: None,
-            genesis_token: None,
-            genesis_url: None,
         }
     }
 

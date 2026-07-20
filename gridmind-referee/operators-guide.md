@@ -18,7 +18,7 @@ team list — skip straight to those if that's what you're doing instead).
 ```
 Build each with as many positions as your physical grid has cards, using object
 classes your teams' boards can actually detect (VOC classes — see
-`student-implementation-guide.md`). An odd total leaves one position
+`student-competition-guide.md`). An odd total leaves one position
 permanently unmatched (integer division in `total_pairs()`), so use an even count.
 
 **The pool must not be empty** — `Close Registration` fails loudly if `data/grids/` has no `.json` files in it, rather than silently falling back to anything. Once a match's grid is assigned, it's recorded permanently in the schedule — even if you restart the Master (see below), the same match keeps the same grid.
@@ -66,6 +66,15 @@ Open:
 ./target/debug/gridmind-referee arena --server 127.0.0.1:35050 --key <event-key> \
   --id arena-2-referee --master-id master-referee --arena-num 2
 ```
+If this arena has a Genesis simulated-arm server co-located with it, add
+`--genesis-url http://127.0.0.1:9005` (its address) and, if that Genesis
+server's `GENESIS_ADMIN_PASSWORD` differs from the default, also
+`--genesis-admin-password <password>`. Each Genesis server can only run
+one active competition at a time — never point two arenas at the same
+Genesis server. Genesis is purely cosmetic: teams' boards each join its
+competition scene and get real per-flip arm animation, but a Genesis
+outage or misconfiguration never affects the real match or score.
+
 Each arena is silent until a match is actually assigned to it — that's normal,
 not a hang. Arenas run independently (each has its own assignment thread), so
 one arena's popup sitting open doesn't freeze the other.

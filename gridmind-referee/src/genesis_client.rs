@@ -37,39 +37,39 @@ impl GenesisClient {
         &self.base_url
     }
 
-    /// Sets up the Genesis scene for a match, sending GridMind's actual
-    /// grid as a best-effort `card_layout` (see `build_card_layout`).
-    /// Returns the server's `token` if it gave one, for use in the
-    /// matching `destroy_env` call and for distributing to students via
-    /// `GameStart` -- `None` on any failure.
-    pub fn create_env(&self, grid: &HashMap<String, String>) -> Option<String> {
+    /// Starts Genesis's own "competition mode" for this match -- the only
+    /// mode that exposes real per-flip arm animation (`flip_card`) and
+    /// turn-gating, as opposed to the earlier `create_env`/"standard mode"
+    /// integration, which could only reach generic, position-unaware
+    /// `move_robot`/`gripper` calls. Sends GridMind's actual grid as a
+    /// best-effort `card_layout` (see `build_card_layout`). Unlike
+    /// standard mode, this doesn't return a per-match token -- students
+    /// each get their own token later by calling `join_competition` with
+    /// a fixed `"team_red"`/`"team_blue"` id (see `GameStart::genesis_team_id`).
+    /// Returns whether the call succeeded; never lets a failure affect the
+    /// real match.
+    pub fn start_competition(&self, admin_password: &str, grid: &HashMap<String, String>) -> bool {
         let body = json!({
-            "action": "create_env",
+            "action": "admin_start_competition",
             "token": Value::Null,
             "params": {
+                "password": admin_password,
                 "scene": SCENE,
                 "card_layout": { "grid": build_card_layout(grid) },
             },
         });
-        let value = self.post_action("create_env", &body)?;
-        value
-            .get("token")
-            .and_then(Value::as_str)
-            .map(|s| s.to_string())
+        self.post_action("admin_start_competition", &body).is_some()
     }
 
-    /// Tears down the Genesis scene at match end. `token` should be
-    /// whatever `create_env` returned, if anything -- sent as JSON `null`
-    /// when absent, matching the real server's envelope shape exactly
-    /// (it tolerates an unknown/missing token gracefully rather than
-    /// erroring). Never lets a failure affect the real match.
-    pub fn destroy_env(&self, token: Option<&str>) {
+    /// Stops Genesis's competition scene at match end. Never lets a
+    /// failure affect the real match.
+    pub fn stop_competition(&self, admin_password: &str) {
         let body = json!({
-            "action": "destroy_env",
-            "token": token,
-            "params": {},
+            "action": "admin_stop_competition",
+            "token": Value::Null,
+            "params": { "password": admin_password },
         });
-        let _ = self.post_action("destroy_env", &body); // no response body needed, just best-effort delivery
+        let _ = self.post_action("admin_stop_competition", &body); // no response body needed, just best-effort delivery
     }
 
     /// Shared request/response handling for both actions: posts `body`,
@@ -154,58 +154,59 @@ mod tests {
     }
 
     #[test]
-    fn create_env_posts_the_real_action_token_params_envelope() {
+    fn start_competition_posts_the_real_action_token_params_envelope() {
         let mut server = mockito::Server::new();
         let mock = server
             .mock("POST", "/")
             .match_body(mockito::Matcher::PartialJson(json!({
-                "action": "create_env",
+                "action": "admin_start_competition",
                 "token": null,
             })))
             .with_status(200)
-            .with_body(r#"{"status":"ok","token":"abc123"}"#)
+            .with_body(r#"{"status":"ok"}"#)
             .create();
 
         let client = GenesisClient::new(&server.url());
-        client.create_env(&test_grid());
+        client.start_competition("admin123", &test_grid());
         mock.assert();
     }
 
     #[test]
-    fn create_env_sends_scene_and_card_layout_in_params() {
+    fn start_competition_sends_password_scene_and_card_layout_in_params() {
         let mut server = mockito::Server::new();
         let mock = server
             .mock("POST", "/")
             .match_body(mockito::Matcher::PartialJson(json!({
                 "params": {
+                    "password": "admin123",
                     "scene": "competition_card_flip",
                     "card_layout": { "grid": [["dog", "dog"]] },
                 }
             })))
             .with_status(200)
-            .with_body(r#"{"status":"ok","token":"abc123"}"#)
+            .with_body(r#"{"status":"ok"}"#)
             .create();
 
         let client = GenesisClient::new(&server.url());
-        client.create_env(&test_grid());
+        client.start_competition("admin123", &test_grid());
         mock.assert();
     }
 
     #[test]
-    fn create_env_extracts_token_from_a_successful_response() {
+    fn start_competition_returns_true_on_a_successful_response() {
         let mut server = mockito::Server::new();
         let _mock = server
             .mock("POST", "/")
             .with_status(200)
-            .with_body(r#"{"status":"ok","token":"abc123"}"#)
+            .with_body(r#"{"status":"ok"}"#)
             .create();
 
         let client = GenesisClient::new(&server.url());
-        assert_eq!(client.create_env(&test_grid()), Some("abc123".to_string()));
+        assert!(client.start_competition("admin123", &test_grid()));
     }
 
     #[test]
-    fn create_env_returns_none_when_status_is_error_even_with_http_200() {
+    fn start_competition_returns_false_when_status_is_error_even_with_http_200() {
         let mut server = mockito::Server::new();
         let _mock = server
             .mock("POST", "/")
@@ -214,89 +215,57 @@ mod tests {
             .create();
 
         let client = GenesisClient::new(&server.url());
-        assert_eq!(client.create_env(&test_grid()), None);
+        assert!(!client.start_competition("admin123", &test_grid()));
     }
 
     #[test]
-    fn create_env_returns_none_when_the_response_has_no_token() {
-        let mut server = mockito::Server::new();
-        let _mock = server
-            .mock("POST", "/")
-            .with_status(200)
-            .with_body(r#"{"status":"ok"}"#)
-            .create();
-
-        let client = GenesisClient::new(&server.url());
-        assert_eq!(client.create_env(&test_grid()), None);
-    }
-
-    #[test]
-    fn create_env_returns_none_and_does_not_panic_on_a_non_2xx_response() {
+    fn start_competition_returns_false_and_does_not_panic_on_a_non_2xx_response() {
         let mut server = mockito::Server::new();
         let _mock = server.mock("POST", "/").with_status(500).create();
 
         let client = GenesisClient::new(&server.url());
-        assert_eq!(client.create_env(&test_grid()), None);
+        assert!(!client.start_competition("admin123", &test_grid()));
     }
 
     #[test]
-    fn create_env_returns_none_and_does_not_panic_when_unreachable() {
+    fn start_competition_returns_false_and_does_not_panic_when_unreachable() {
         // Port 1 is reserved; nothing will ever be listening there.
         let client = GenesisClient::new("http://127.0.0.1:1");
-        assert_eq!(client.create_env(&test_grid()), None);
+        assert!(!client.start_competition("admin123", &test_grid()));
     }
 
     #[test]
-    fn destroy_env_posts_the_token_in_the_envelope_when_present() {
+    fn stop_competition_posts_the_password_in_the_envelope() {
         let mut server = mockito::Server::new();
         let mock = server
             .mock("POST", "/")
             .match_body(mockito::Matcher::Json(json!({
-                "action": "destroy_env",
-                "token": "abc123",
-                "params": {},
-            })))
-            .with_status(200)
-            .with_body(r#"{"status":"ok"}"#)
-            .create();
-
-        let client = GenesisClient::new(&server.url());
-        client.destroy_env(Some("abc123"));
-        mock.assert();
-    }
-
-    #[test]
-    fn destroy_env_posts_null_token_when_absent() {
-        let mut server = mockito::Server::new();
-        let mock = server
-            .mock("POST", "/")
-            .match_body(mockito::Matcher::Json(json!({
-                "action": "destroy_env",
+                "action": "admin_stop_competition",
                 "token": null,
-                "params": {},
+                "params": { "password": "admin123" },
             })))
             .with_status(200)
             .with_body(r#"{"status":"ok"}"#)
             .create();
 
         let client = GenesisClient::new(&server.url());
-        client.destroy_env(None);
+        client.stop_competition("admin123");
         mock.assert();
     }
 
     #[test]
-    fn destroy_env_does_not_panic_on_failure() {
+    fn stop_competition_does_not_panic_on_failure() {
         let mut server = mockito::Server::new();
         let _mock = server.mock("POST", "/").with_status(500).create();
 
         let client = GenesisClient::new(&server.url());
-        client.destroy_env(None);
+        client.stop_competition("admin123");
     }
 
     #[test]
-    fn destroy_env_does_not_panic_when_unreachable() {
+    fn stop_competition_does_not_panic_when_unreachable() {
         let client = GenesisClient::new("http://127.0.0.1:1");
-        client.destroy_env(Some("abc123"));
+        client.stop_competition("admin123");
     }
 
     #[test]

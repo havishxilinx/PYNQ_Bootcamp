@@ -17,9 +17,8 @@ live under `bootcamp_sessions/` elsewhere in this repo, not here.
 | `data/` | Content the referee loads at runtime: grid pool (`grids/`), riddle banks, MNIST digit assets, and `game_config.json` (see below). |
 | `example_grid.json`, `example_pools_config.json`, `kv260_test_grid.json`, `kv260_test_pools.json` | Fixture files for local testing / `--config` mode. |
 | `simulate_tournament.py`, `demo_student_bot.py` | Run a full tournament end-to-end with simulated boards — no hardware or student notebooks needed. See below. |
-| `student-api-reference.html` | The wire-protocol reference (exact JSON message shapes) linked from the student guides. |
 | `operators-guide.md` | Step-by-step guide for whoever runs the tournament from the operator console on event day. |
-| `student-competition-guide.md`, `student-implementation-guide.md`, `student-rescue-modules.md` | What students need to know to build their board's client and compete. |
+| `student-competition-guide.md` | The single canonical rulebook for teams: game rules, scoring, tournament format, the full wire protocol reference, and drop-in rescue code snippets for office hours. |
 | `kv260-real-hardware-demo-guide.md`, `manual-demo-walkthrough.md`, `three-machine-demo-guide.md` | Rehearsal/demo guides for different setups (real KV260s, manual curl walkthrough, distributed multi-machine). |
 
 ## Building
@@ -59,10 +58,25 @@ registration and matches.
 talks over is distributed separately, not part of this directory —
 **TODO(havish): fill in where organizers/students get it for event day.**
 
+## Genesis simulated robot arm (optional, purely cosmetic)
+
+Each arena can optionally be paired with its own Genesis simulated-arm
+server for visual flavor — pass `--genesis-url` (and `--genesis-admin-password`
+if that server's `GENESIS_ADMIN_PASSWORD` isn't the default) to the `arena`
+subcommand. The referee starts Genesis's *competition mode* for the match
+(`admin_start_competition`), and each student board joins it directly as
+`"team_red"`/`"team_blue"` (the `genesis_team_id` sent in `game_start`) to
+get real per-flip arm animation via `pynqsim.SimulationClient.flip_card()`.
+A Genesis outage or misconfiguration never affects the real match — it's
+decided entirely by `report_result`, same as always. Each Genesis server
+supports only one active competition at a time, so never point two arenas
+at the same one.
+
 ## Where to start reading
 
 - Running the event? Start with `operators-guide.md`.
 - Rehearsing without hardware? `manual-demo-walkthrough.md` (curl, step by
   step) or `simulate_tournament.py` (fully automated).
-- Building a team's competition entry? `student-competition-guide.md`, then
-  `student-implementation-guide.md` for the technical breakdown.
+- Building a team's competition entry? `student-competition-guide.md` —
+  everything from the rules to the wire protocol to rescue snippets is in
+  that one document.

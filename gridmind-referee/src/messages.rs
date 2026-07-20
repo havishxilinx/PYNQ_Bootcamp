@@ -56,17 +56,18 @@ pub enum RefereeMessage {
         /// assigns it deterministically: board 0 is the puzzle-race winner
         /// who moves first, board 1 is the other team. Always present
         /// (unlike the two fields below) since it costs nothing to send,
-        /// but only meaningful when `genesis_token` is `Some` -- clients
+        /// but only meaningful when `genesis_team_id` is `Some` -- clients
         /// (the `pynqsim` student library) must treat this as undefined
         /// and not act on it when Genesis isn't configured for this match.
         robot_id: u32,
-        /// The Genesis session token this match's scene was created
-        /// under, so the student's own `pynqsim.SimulationClient` can
-        /// control the *same* shared scene the referee set up, instead of
-        /// creating its own disconnected one. `None` when Genesis isn't
-        /// configured for this arena.
+        /// The fixed team id (`"team_red"` for `robot_id` 0, `"team_blue"`
+        /// for `robot_id` 1) this student's board should pass to its own
+        /// `pynqsim.SimulationClient.join_competition(team_id)` call --
+        /// Genesis's competition mode has no concept of GridMind's actual
+        /// team names, only these two hardcoded ids. `None` when Genesis
+        /// isn't configured for this arena.
         #[serde(default)]
-        genesis_token: Option<String>,
+        genesis_team_id: Option<String>,
         /// Base URL of the Genesis server this match's scene lives on,
         /// for the student's `SimulationClient` to connect to. `None`
         /// when Genesis isn't configured for this arena.
@@ -284,7 +285,7 @@ mod tests {
             teams: vec!["alpha".to_string(), "beta".to_string()],
             total_pairs: 15,
             robot_id: 1,
-            genesis_token: Some("abc123".to_string()),
+            genesis_team_id: Some("team_blue".to_string()),
             genesis_url: Some("http://127.0.0.1:9002".to_string()),
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -303,7 +304,7 @@ mod tests {
                 teams: vec!["alpha".to_string(), "beta".to_string()],
                 total_pairs: 15,
                 robot_id: 0,
-                genesis_token: None,
+                genesis_team_id: None,
                 genesis_url: None,
             }
         );

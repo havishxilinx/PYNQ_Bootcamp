@@ -49,6 +49,12 @@ enum Command {
         /// purely cosmetic, the match plays identically either way.
         #[arg(long)]
         genesis_url: Option<String>,
+        /// Admin password for this Genesis server's `admin_start_competition`/
+        /// `admin_stop_competition` actions -- must match that server's own
+        /// `GENESIS_ADMIN_PASSWORD` env var. Defaults to Genesis's own
+        /// documented default; ignored entirely when `genesis_url` is unset.
+        #[arg(long, default_value = "admin123")]
+        genesis_admin_password: String,
     },
 }
 
@@ -142,6 +148,15 @@ fn main() -> Result<()> {
             master_id,
             arena_num,
             genesis_url,
-        } => run_arena(&server, &key, &id, &master_id, arena_num, genesis_url),
+            genesis_admin_password,
+        } => run_arena(
+            &server,
+            &key,
+            &id,
+            &master_id,
+            arena_num,
+            genesis_url,
+            genesis_admin_password,
+        ),
     }
 }

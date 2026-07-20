@@ -34,18 +34,11 @@ pub struct LiveArenaState {
     /// override controls -- the frontend shows a "PAUSED" indicator and
     /// freezes the displayed turn timer instead of ticking it down.
     pub is_paused: bool,
-    /// `Some((pos1, pos2))` while a revealed pair is waiting out the
-    /// physical flip delay -- the frontend renders a "flip the card
-    /// now" banner while this is set, and hides it once cleared.
+    /// `Some((pos1, pos2))` from the moment a pair's second card is
+    /// revealed until its result is processed -- the frontend renders a
+    /// "flip the card now" banner while this is set, and hides it once
+    /// cleared.
     pub flip_pending_positions: Option<(String, String)>,
-    /// The Genesis session token for this arena's current match, if
-    /// Genesis is configured -- the arena-specific UI embeds a live
-    /// video feed from it when present.
-    pub genesis_token: Option<String>,
-    /// Base URL of the Genesis server (e.g. `http://localhost:9002`),
-    /// forwarded to the arena UI so it can construct the full MJPEG
-    /// stream URL without a manually-specified query param.
-    pub genesis_url: Option<String>,
 }
 
 /// A pool's roster and round-robin schedule size, shown in the Idle
@@ -215,8 +208,6 @@ mod tests {
             match_started_at_unix_ms: 1_800_000_000_000,
             is_paused: false,
             flip_pending_positions: None,
-            genesis_token: None,
-            genesis_url: None,
         }
     }
 
@@ -409,36 +400,6 @@ mod tests {
         let arena = sample_arena_state();
         let json = serde_json::to_string(&arena).unwrap();
         assert!(json.contains(r#""flip_pending_positions":null"#));
-    }
-
-    #[test]
-    fn live_arena_state_serializes_genesis_token_when_present() {
-        let mut arena = sample_arena_state();
-        arena.genesis_token = Some("abc123".to_string());
-        let json = serde_json::to_string(&arena).unwrap();
-        assert!(json.contains(r#""genesis_token":"abc123""#));
-    }
-
-    #[test]
-    fn live_arena_state_serializes_genesis_token_as_null_when_absent() {
-        let arena = sample_arena_state();
-        let json = serde_json::to_string(&arena).unwrap();
-        assert!(json.contains(r#""genesis_token":null"#));
-    }
-
-    #[test]
-    fn live_arena_state_serializes_genesis_url_when_present() {
-        let mut arena = sample_arena_state();
-        arena.genesis_url = Some("http://localhost:9002".to_string());
-        let json = serde_json::to_string(&arena).unwrap();
-        assert!(json.contains(r#""genesis_url":"http://localhost:9002""#));
-    }
-
-    #[test]
-    fn live_arena_state_serializes_genesis_url_as_null_when_absent() {
-        let arena = sample_arena_state();
-        let json = serde_json::to_string(&arena).unwrap();
-        assert!(json.contains(r#""genesis_url":null"#));
     }
 
     #[test]

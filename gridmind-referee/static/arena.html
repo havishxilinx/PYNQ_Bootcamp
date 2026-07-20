@@ -6,10 +6,7 @@
 <style>
   html, body { height: 100%; margin: 0; }
   body { background: #0d1117; color: #e6edf3; font-family: -apple-system, Helvetica, Arial, sans-serif; display: flex; flex-direction: column; }
-  .video-zone { flex: 1; display: flex; align-items: center; justify-content: center; background: #000; min-height: 0; }
-  .video-zone img { max-width: 100%; max-height: 100%; }
-  .video-placeholder { text-align: center; opacity: 0.7; padding: 40px; font-size: 20px; }
-  .strip { background: #161b22; border-top: 1px solid rgba(255,255,255,0.08); padding: 16px 24px; }
+  .strip { background: #161b22; padding: 16px 24px; flex: 1; }
   .team-row { display: flex; justify-content: space-between; align-items: center; font-size: 22px; margin-bottom: 4px; font-weight: 500; }
   .score { font-size: 26px; font-weight: 800; color: #ED1C24; }
   .active { color: #fff; text-shadow: 0 0 10px rgba(237,28,36,0.65); }
@@ -39,29 +36,6 @@ function esc(value) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-function renderVideoZone(arena) {
-  if (arena && arena.genesis_token && arena.genesis_url) {
-    // genesis_url is the base URL of the Genesis server (e.g. http://localhost:9002).
-    // The MJPEG stream endpoint is /stream/<token>. Build the full URL from
-    // genesis_url so the operator doesn't need to pass ?stream_port manually.
-    //
-    // encodeURIComponent (not esc()) is correct here: this is a URL path
-    // segment, not HTML text/attribute content -- esc() would double-encode
-    // the % signs encodeURIComponent already emits, producing a broken URL.
-    //
-    // This page is meant to run on the same machine as its own arena's Genesis
-    // instance (genesis_url will be localhost). Opening it from a different
-    // machine will fail to load the image -- the onerror fallback swaps in a
-    // placeholder so that reads as "stream unavailable here" rather than a
-    // broken-image icon.
-    const streamUrl = `${arena.genesis_url}/stream/${encodeURIComponent(arena.genesis_token)}`;
-    return `<img src="${streamUrl}"
-                 alt="Genesis live view"
-                 onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'video-placeholder', textContent: 'Genesis stream unavailable on this machine'}))">`;
-  }
-  return `<div class="video-placeholder">🤖 Genesis viewer running on this machine -- open it alongside this window</div>`;
 }
 
 // Timing/scoring constants come from GET /api/config (backed by
@@ -243,11 +217,11 @@ function render(state) {
   }
 
   if (pregame) {
-    root.innerHTML = `<div class="video-zone">${renderVideoZone(null)}</div><div class="strip">${renderPregameStrip(pregame)}</div>`;
+    root.innerHTML = `<div class="strip">${renderPregameStrip(pregame)}</div>`;
     return;
   }
   if (arena) {
-    root.innerHTML = `<div class="video-zone">${renderVideoZone(arena)}</div><div class="strip">${renderStrip(arena)}</div>`;
+    root.innerHTML = `<div class="strip">${renderStrip(arena)}</div>`;
     return;
   }
   activeView = null;
