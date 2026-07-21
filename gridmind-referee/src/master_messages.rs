@@ -39,6 +39,12 @@ pub enum ArenaToMaster {
         winner: String,
         scores: HashMap<String, i32>,
         pairs_matched: HashMap<String, u32>,
+        /// True for a Practice Mode match (see `AdminCommand::StartPractice`)
+        /// -- the Master clears that arena's live scoreboard state but never
+        /// touches `Tournament`/pool standings for one of these. `#[serde(default)]`
+        /// so older arena binaries that predate Practice Mode still parse.
+        #[serde(default)]
+        practice: bool,
     },
 }
 
@@ -56,6 +62,17 @@ pub enum MasterToArena {
         team_b_id: String,
         grid_id: String,
         first_turn_team: String,
+    },
+    /// Starts a Practice Mode match: `team_a` plays alone against the
+    /// referee's own built-in bot opponent (`game_state::BOT_TEAM_NAME`/
+    /// `BOT_BOARD_ID`) -- no puzzle race, no free hint, no Genesis, and the
+    /// result never touches tournament/pool standings. See
+    /// `AdminCommand::StartPractice` and `web.rs`'s `/api/start-practice-match`.
+    #[serde(rename = "assign_practice_match")]
+    AssignPracticeMatch {
+        team_a: String,
+        team_a_id: String,
+        grid_id: String,
     },
     /// Operator-console overrides for a live match. See `web.rs`'s
     /// `/api/admin/*` routes and `arena.rs`'s handling in `run_one_match`.

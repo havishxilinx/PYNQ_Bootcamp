@@ -41,6 +41,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/admin/resume", post(admin_resume))
         .route("/api/admin/stop", post(admin_stop))
         .route("/api/admin/finish", post(admin_finish))
+        .route("/api/start-practice-match", post(start_practice_match))
         .with_state(state)
 }
 
@@ -316,6 +317,81 @@ async fn admin_finish(
         Err(response) => return response,
     };
     send_result_status(sender.try_send(crate::master::AdminCommand::Finish))
+}
+
+/// True if `arena` currently has a real match live or its pre-game
+/// ceremony in progress -- the guard `start_practice_match` uses to refuse
+/// double-booking the same arena. Registration/Idle/Champion phases never
+/// have a live arena at all, so they're always "not busy".
+fn is_arena_busy(state: &ScoreboardState, arena: u32) -> bool {
+    match state {
+        ScoreboardState::LivePoolPlay {
+            arena1,
+            arena1_pregame,
+            arena2,
+            arena2_pregame,
+            ..
+        } => {
+            if arena == 1 {
+                arena1.is_some() || arena1_pregame.is_some()
+            } else {
+                arena2.is_some() || arena2_pregame.is_some()
+            }
+        }
+        ScoreboardState::GrandFinal { arena_num, .. } => *arena_num == arena,
+        ScoreboardState::Registration { .. } | ScoreboardState::Idle { .. } => false,
+        ScoreboardState::Champion { .. } => false,
+    }
+}
+
+#[derive(Deserialize)]
+struct StartPracticeMatchRequest {
+    arena: u32,
+    team_name: String,
+    team_mac: String,
+    grid_id: String,
+}
+
+/// Starts a Practice Mode match: `team_name` plays alone against the
+/// referee's built-in bot opponent, so a team can walk up and validate
+/// their own client against the real referee without needing a second
+/// real team. No puzzle race, no free hint, no Genesis, and the result
+/// never touches tournament/pool standings (see `game_state::BOT_TEAM_NAME`
+/// and `AdminCommand::StartPractice`).
+async fn start_practice_match(
+    State(state): State<AppState>,
+    Json(body): Json<StartPracticeMatchRequest>,
+) -> impl IntoResponse {
+    let sender = match admin_sender(&state, body.arena) {
+        Ok(sender) => sender,
+        Err(response) => return response,
+    };
+    let snapshot = state.master_state.snapshot();
+    // Restricted to live_pool_play on purpose: a ScoreUpdate from a
+    // practice match unconditionally writes `ScoreboardState::LivePoolPlay`
+    // (see `run_master`'s handling of `ArenaToMaster::ScoreUpdate`), which
+    // would silently knock the operator console out of the Registration/
+    // Idle view mid-setup if allowed there. GrandFinal's `ScoreboardState`
+    // has no room for a second, unrelated arena's state either. Pre-event
+    // validation should run against a separate rehearsal instance (see
+    // `manual-demo-walkthrough.md`), not the real event's Master.
+    if !matches!(snapshot, ScoreboardState::LivePoolPlay { .. }) {
+        return (
+            StatusCode::CONFLICT,
+            "practice matches can only be started during live pool play (between real matches)",
+        );
+    }
+    if is_arena_busy(&snapshot, body.arena) {
+        return (
+            StatusCode::CONFLICT,
+            "arena already has a live match or pre-game ceremony in progress",
+        );
+    }
+    send_result_status(sender.try_send(crate::master::AdminCommand::StartPractice {
+        team_name: body.team_name,
+        team_mac: body.team_mac,
+        grid_id: body.grid_id,
+    }))
 }
 
 #[cfg(test)]
@@ -816,5 +892,184 @@ mod tests {
         let app = build_router(state);
         let response = post_json(app, "/api/admin/pause", r#"{"arena":99}"#).await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn start_practice_match_sends_on_the_admin_channel_when_arena_is_idle_during_live_pool_play(
+    ) {
+        let (state, mut rx) = test_app_state();
+        state
+            .master_state
+            .update(idle_live_pool_play_scoreboard_state());
+        let app = build_router(state);
+        let response = post_json(
+            app,
+            "/api/start-practice-match",
+            r#"{"arena":1,"team_name":"alpha","team_mac":"aa:aa","grid_id":"data/grids/grid_1.json"}"#,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            rx.admin_arena1.try_recv(),
+            Ok(crate::master::AdminCommand::StartPractice {
+                team_name: "alpha".to_string(),
+                team_mac: "aa:aa".to_string(),
+                grid_id: "data/grids/grid_1.json".to_string(),
+            })
+        );
+        assert!(rx.admin_arena2.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn start_practice_match_rejects_an_arena_number_other_than_one_or_two() {
+        let (state, _rx) = test_app_state();
+        let app = build_router(state);
+        let response = post_json(
+            app,
+            "/api/start-practice-match",
+            r#"{"arena":99,"team_name":"alpha","team_mac":"aa:aa","grid_id":"g.json"}"#,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn start_practice_match_rejects_outside_live_pool_play() {
+        // test_app_state()'s default snapshot is ScoreboardState::Idle --
+        // registration hasn't even closed yet, let alone reached live play.
+        let (state, mut rx) = test_app_state();
+        let app = build_router(state);
+        let response = post_json(
+            app,
+            "/api/start-practice-match",
+            r#"{"arena":1,"team_name":"alpha","team_mac":"aa:aa","grid_id":"g.json"}"#,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(rx.admin_arena1.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn start_practice_match_rejects_when_that_arena_has_a_live_match() {
+        let (state, mut rx) = test_app_state();
+        state.master_state.update(ScoreboardState::LivePoolPlay {
+            arena1: Some(Box::new(sample_live_arena_state())),
+            arena2: None,
+            arena1_pregame: None,
+            arena2_pregame: None,
+            pool1_standings: vec![],
+            pool2_standings: vec![],
+            pool1_schedule: vec![],
+            pool2_schedule: vec![],
+            grand_final_ready: None,
+        });
+        let app = build_router(state);
+        let response = post_json(
+            app,
+            "/api/start-practice-match",
+            r#"{"arena":1,"team_name":"alpha","team_mac":"aa:aa","grid_id":"g.json"}"#,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(rx.admin_arena1.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn start_practice_match_rejects_when_that_arena_has_a_pregame_ceremony() {
+        let (state, mut rx) = test_app_state();
+        state.master_state.update(ScoreboardState::LivePoolPlay {
+            arena1: None,
+            arena2: None,
+            arena1_pregame: Some(Box::new(
+                crate::scoreboard_state::PregameState::PuzzleRace {
+                    team_a: "alpha".to_string(),
+                    team_b: "beta".to_string(),
+                    deadline_unix_ms: 123,
+                    riddle: "riddle".to_string(),
+                },
+            )),
+            arena2_pregame: None,
+            pool1_standings: vec![],
+            pool2_standings: vec![],
+            pool1_schedule: vec![],
+            pool2_schedule: vec![],
+            grand_final_ready: None,
+        });
+        let app = build_router(state);
+        let response = post_json(
+            app,
+            "/api/start-practice-match",
+            r#"{"arena":1,"team_name":"alpha","team_mac":"aa:aa","grid_id":"g.json"}"#,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(rx.admin_arena1.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn start_practice_match_allows_the_other_arena_while_one_is_busy() {
+        let (state, mut rx) = test_app_state();
+        state.master_state.update(ScoreboardState::LivePoolPlay {
+            arena1: Some(Box::new(sample_live_arena_state())),
+            arena2: None,
+            arena1_pregame: None,
+            arena2_pregame: None,
+            pool1_standings: vec![],
+            pool2_standings: vec![],
+            pool1_schedule: vec![],
+            pool2_schedule: vec![],
+            grand_final_ready: None,
+        });
+        let app = build_router(state);
+        let response = post_json(
+            app,
+            "/api/start-practice-match",
+            r#"{"arena":2,"team_name":"gamma","team_mac":"cc:cc","grid_id":"g.json"}"#,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            rx.admin_arena2.try_recv(),
+            Ok(crate::master::AdminCommand::StartPractice {
+                team_name: "gamma".to_string(),
+                team_mac: "cc:cc".to_string(),
+                grid_id: "g.json".to_string(),
+            })
+        );
+    }
+
+    fn idle_live_pool_play_scoreboard_state() -> ScoreboardState {
+        ScoreboardState::LivePoolPlay {
+            arena1: None,
+            arena2: None,
+            arena1_pregame: None,
+            arena2_pregame: None,
+            pool1_standings: vec![],
+            pool2_standings: vec![],
+            pool1_schedule: vec![],
+            pool2_schedule: vec![],
+            grand_final_ready: None,
+        }
+    }
+
+    fn sample_live_arena_state() -> crate::scoreboard_state::LiveArenaState {
+        crate::scoreboard_state::LiveArenaState {
+            pool: 1,
+            team_a: "alpha".to_string(),
+            team_b: "beta".to_string(),
+            scores: HashMap::from([("alpha".to_string(), 3), ("beta".to_string(), 1)]),
+            matched: HashMap::new(),
+            all_positions: vec![],
+            active_team: "alpha".to_string(),
+            turn_seconds_remaining: 100,
+            streak: HashMap::new(),
+            hints_used: HashMap::new(),
+            pairs_found: 1,
+            total_pairs: 15,
+            puzzle_winner: "alpha".to_string(),
+            match_started_at_unix_ms: 1_800_000_000_000,
+            is_paused: false,
+            flip_pending_positions: None,
+        }
     }
 }

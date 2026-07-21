@@ -361,11 +361,24 @@ pub struct MatchStartInput {
 /// server of its own -- see `PROJECT_STATE.md`'s architecture notes).
 #[derive(Debug, Clone, PartialEq)]
 pub enum AdminCommand {
-    SetScore { team: String, score: i32 },
+    SetScore {
+        team: String,
+        score: i32,
+    },
     Pause,
     Resume,
     Stop,
     Finish,
+    /// Starts a Practice Mode match on this arena: `team_name` plays alone
+    /// against the referee's built-in bot. Relayed the same way as the
+    /// other admin commands (straight to the arena process, no tournament
+    /// state involved) -- `web.rs`'s handler is what guards against
+    /// sending this while the arena already has a real match live.
+    StartPractice {
+        team_name: String,
+        team_mac: String,
+        grid_id: String,
+    },
 }
 
 impl AdminCommand {
@@ -377,6 +390,15 @@ impl AdminCommand {
             AdminCommand::Resume => MasterToArena::AdminResume,
             AdminCommand::Stop => MasterToArena::AdminStop,
             AdminCommand::Finish => MasterToArena::AdminFinish,
+            AdminCommand::StartPractice {
+                team_name,
+                team_mac,
+                grid_id,
+            } => MasterToArena::AssignPracticeMatch {
+                team_a: team_name,
+                team_a_id: team_mac,
+                grid_id,
+            },
         }
     }
 }
@@ -807,12 +829,25 @@ pub fn run_master(
                         }
                     }
                     ArenaToMaster::MatchResult {
-                        arena: _,
+                        arena,
                         pool,
                         winner,
                         scores,
                         pairs_matched,
+                        practice,
                     } => {
+                        if practice {
+                            // Checked before touching `pool` at all: a
+                            // practice match's `pool` is a display-only
+                            // sentinel (`game_state::PRACTICE_POOL`), never
+                            // a real pool number or 0 -- this must never
+                            // reach `record_result` or the Champion branch.
+                            println!(
+                                "[arena {arena}] practice match ended, winner: {winner}, scores: {scores:?}"
+                            );
+                            clear_arena_for_new_match(&master_state, arena);
+                            continue;
+                        }
                         println!("[pool {pool}] match ended, winner: {winner}, scores: {scores:?}");
                         if pool != 0 {
                             let loser = scores

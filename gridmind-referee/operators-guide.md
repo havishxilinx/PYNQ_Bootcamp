@@ -205,6 +205,35 @@ declared** — it deliberately loops forever so the projected trophy screen
 stays up on the projector. To run a second tournament that same day, Ctrl+C
 the Master and restart it (registration begins fresh).
 
+## Practice Mode — let a team validate their client without a second team
+
+Once you're past registration (any time the console shows the Schedule
+view), a **Practice Mode** panel appears above the arena admin panels. A
+team can walk up, connect their board as usual, and play a real match
+against the referee's own built-in bot ("Referee Bot") instead of another
+team — genuinely exercises their client's wire protocol, vision pipeline,
+and turn loop against the real referee, with none of it touching pool
+standings or the Grand Final.
+
+1. Pick which idle arena to use, enter the team's name and MAC (same as a
+   normal match-assign — type it manually or have them `join_competition`
+   first), and a grid file (any `data/grids/*.json`).
+2. Click **Start Practice Match**. The bot always lets the real team go
+   first. When it's the bot's turn, it announces its flip immediately (same
+   "FLIP CARDS AT X AND Y NOW" banner a real flip uses) and waits about 6
+   seconds — matching the real physical-flip pacing — before reporting its
+   (always truthful) result.
+3. The match plays out and scores exactly like a real one, visible on the
+   scoreboard and that arena's admin panel (pause/stop/finish all work
+   normally). Once it ends, the arena resets to idle — nothing about it
+   reaches the pool schedule or standings.
+
+**Blocked (409) if:** the tournament hasn't reached the live Schedule phase
+yet (Registration/Idle — pre-event validation should use a separate
+rehearsal instance instead, see `manual-demo-walkthrough.md`), or the
+chosen arena already has a real match or pre-game ceremony running. Pick
+the other arena, or wait.
+
 ## Troubleshooting quick reference
 
 | Symptom | Likely cause / where to look |

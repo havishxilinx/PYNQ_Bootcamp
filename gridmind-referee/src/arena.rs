@@ -33,6 +33,13 @@ struct AssignedMatch {
     team_b_id: String,
     grid_id: String,
     first_turn_team: String,
+    /// True for a Practice Mode match -- `team_b`/`team_b_id` are already
+    /// filled in as `game_state::BOT_TEAM_NAME`/`BOT_BOARD_ID` in this
+    /// case, so the rest of `run_one_match`'s team-ordering logic works
+    /// unchanged; this flag only gates the handful of things that
+    /// genuinely differ (no Genesis, no GameStart sent to the bot, and
+    /// driving `GameState::maybe_play_bot_turn` each poll tick).
+    is_practice: bool,
 }
 
 /// Runs forever: waits for a match assignment from the Master, plays it
@@ -93,6 +100,23 @@ fn wait_for_assignment(client: &P2pClient) -> Result<AssignedMatch> {
                         team_b_id,
                         grid_id,
                         first_turn_team,
+                        is_practice: false,
+                    });
+                }
+                Ok(MasterToArena::AssignPracticeMatch {
+                    team_a,
+                    team_a_id,
+                    grid_id,
+                }) => {
+                    return Ok(AssignedMatch {
+                        pool: crate::game_state::PRACTICE_POOL,
+                        team_a: team_a.clone(),
+                        team_a_id,
+                        team_b: crate::game_state::BOT_TEAM_NAME.to_string(),
+                        team_b_id: crate::game_state::BOT_BOARD_ID.to_string(),
+                        grid_id,
+                        first_turn_team: team_a,
+                        is_practice: true,
                     });
                 }
                 Ok(other) => {
@@ -121,8 +145,18 @@ fn run_one_match(
 ) -> Result<()> {
     let pool_num = assignment.pool;
     let grid = load_grid(&assignment.grid_id)?;
+    // Practice matches never touch Genesis -- there's no second real board
+    // for a second arm to belong to, and no per-match token/stream needed
+    // just to watch a bot play. Shadowing to None here means every other
+    // `if let Some(g) = genesis` below already does the right thing.
+    let genesis = if assignment.is_practice {
+        None
+    } else {
+        genesis
+    };
     // Order teams so the puzzle-race winner goes first (GameState always
-    // starts with teams[0] active).
+    // starts with teams[0] active) -- for a practice match this is always
+    // team_a, since `wait_for_assignment` sets `first_turn_team` to it.
     let teams = if assignment.first_turn_team == assignment.team_a {
         vec![
             (assignment.team_a.clone(), assignment.team_a_id.clone()),
@@ -143,6 +177,10 @@ fn run_one_match(
 
     let genesis_url = genesis.map(|g| g.base_url().to_string());
     for (robot_id, (_, id)) in teams.iter().enumerate() {
+        // The bot has no real board listening -- nothing to send it.
+        if assignment.is_practice && id == crate::game_state::BOT_BOARD_ID {
+            continue;
+        }
         // Genesis's competition mode only knows these two hardcoded team
         // ids -- see `GameStart::genesis_team_id`'s doc comment.
         let genesis_team_id = genesis.map(|_| {
@@ -186,6 +224,7 @@ fn run_one_match(
                             winner: state.winner(),
                             scores: state.scores(),
                             pairs_matched: state.pairs_matched_by_team(),
+                            practice: assignment.is_practice,
                         };
                         client.send(master_id, &serde_json::to_string(&msg)?)?;
                         if let Some(g) = genesis {
@@ -195,6 +234,11 @@ fn run_one_match(
                     }
                     // Shouldn't arrive mid-match; harmless to ignore if it does.
                     MasterToArena::AssignMatch { .. } => {}
+                    MasterToArena::AssignPracticeMatch { .. } => {
+                        eprintln!(
+                            "arena: discarding practice-match request while a match is already in progress"
+                        );
+                    }
                 }
                 report_to_master(
                     client,
@@ -265,12 +309,31 @@ fn run_one_match(
                 winner: state.winner(),
                 scores: state.scores(),
                 pairs_matched: state.pairs_matched_by_team(),
+                practice: assignment.is_practice,
             };
             client.send(master_id, &serde_json::to_string(&msg)?)?;
             if let Some(g) = genesis {
                 g.stop_competition(genesis_admin_password);
             }
             break;
+        }
+
+        if assignment.is_practice {
+            let bot_messages = state.maybe_play_bot_turn(Instant::now());
+            if !bot_messages.is_empty() {
+                send_all(client, bot_messages)?;
+                report_to_master(
+                    client,
+                    master_id,
+                    MatchReport {
+                        arena: arena_num,
+                        pool: pool_num,
+                        state: &state,
+                        now: Instant::now(),
+                        puzzle_winner: &assignment.first_turn_team,
+                    },
+                )?;
+            }
         }
 
         if let Some(outgoing) = state.check_timeout(Instant::now()) {

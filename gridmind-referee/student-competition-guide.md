@@ -781,6 +781,14 @@ memory rather than re-guessing the same wrong pair.
 No. Genesis is 100% cosmetic — a failed or skipped Genesis call never
 affects your match in any way.
 
+**Q: We played a match against a team called "Referee Bot" — is that real?**
+Yes — that's Practice Mode, an operator-triggered way to validate your
+client against the real referee without needing a second team. It plays
+by the exact same rules and wire protocol as a real opponent (it just
+always reports truthfully). Ask an RC Team member to set one up for you
+if you want to test before your first real match; it never affects
+tournament standings either way.
+
 **Q: Where do we ask if something in this doc seems wrong?**
 Flag it to the RC Team directly — don't guess, and don't trust an older
 planning doc, slide, or Confluence page over this one.

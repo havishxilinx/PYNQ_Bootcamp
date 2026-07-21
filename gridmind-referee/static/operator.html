@@ -111,6 +111,34 @@
 
 <!-- 3. Schedule view (live_pool_play | grand_final) -->
 <div id="schedule-view" style="display:none;">
+  <!-- Practice Mode: live_pool_play only -- a practice match's own live
+       state has nowhere to go in grand_final's ScoreboardState shape
+       (one shared `arena` slot, not a per-arena arena1/arena2 pair). -->
+  <div class="pool" id="practice-mode-panel" style="display:none;">
+    <h3>🤖 Practice Mode</h3>
+    <p style="font-size:13px;color:#8b949e;margin:-4px 0 10px;">
+      One team plays alone against the referee's own bot opponent to validate
+      their client -- no second team needed, and the result never touches
+      tournament standings. Blocked if the chosen arena already has a live
+      match or pre-game ceremony running.
+    </p>
+    <div>
+      <label>Arena:
+        <select id="practice-arena">
+          <option value="1">Arena 1</option>
+          <option value="2">Arena 2</option>
+        </select>
+      </label>
+    </div>
+    <div style="margin-top:8px;">
+      <input type="text" id="practice-team-name" placeholder="Team name">
+      <input type="text" id="practice-team-mac" placeholder="Team MAC (aa:bb:cc:dd:ee:ff)">
+    </div>
+    <div style="margin-top:8px;">
+      <input type="text" id="practice-grid-id" placeholder="Grid file, e.g. data/grids/grid_1.json" style="width:280px;">
+    </div>
+    <button onclick="startPracticeMatch()" style="margin-top:8px;">Start Practice Match</button>
+  </div>
   <div class="pool" id="admin-panel-1-wrap" style="display:none;">
     <h3>Arena 1 -- Live Match Admin</h3>
     <div id="admin-panel-1" class="admin-panel"></div>
@@ -359,6 +387,27 @@ function adminFinish(arenaNum) {
   postAdmin('finish', { arena: arenaNum });
 }
 
+// ── Practice Mode ────────────────────────────────────────────────────────────
+async function startPracticeMatch() {
+  const arena = parseInt(document.getElementById('practice-arena').value, 10);
+  const team_name = document.getElementById('practice-team-name').value.trim();
+  const team_mac = document.getElementById('practice-team-mac').value.trim();
+  const grid_id = document.getElementById('practice-grid-id').value.trim();
+  if (!team_name || !team_mac || !grid_id) {
+    alert('Enter a team name, MAC, and grid file for the practice match.');
+    return;
+  }
+  const response = await fetch('/api/start-practice-match', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ arena, team_name, team_mac, grid_id }),
+  });
+  if (await reportIfFailed(response, 'Start Practice Match')) {
+    document.getElementById('practice-team-name').value = '';
+    document.getElementById('practice-team-mac').value = '';
+  }
+}
+
 /// Renders (or hides) one arena's persistent admin panel. `liveState` is
 /// the arena's `LiveArenaState` (from `state.arena1`/`arena2`, or
 /// `state.arena` during the Grand Final) -- null/undefined means no live
@@ -481,6 +530,9 @@ function render(state) {
     document.getElementById('pool2-info').textContent =
       `${state.pool2.teams.join(', ')} (${state.pool2.total_matches} matches)`;
   }
+
+  document.getElementById('practice-mode-panel').style.display =
+    state.phase === 'live_pool_play' ? 'block' : 'none';
 
   if (state.phase === 'live_pool_play') {
     renderAdminPanel(1, state.arena1);

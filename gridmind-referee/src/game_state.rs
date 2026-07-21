@@ -14,6 +14,37 @@ fn response_tier_bonus(elapsed: Duration) -> i32 {
     crate::config::get().tier_bonus(elapsed)
 }
 
+/// Reserved board id/team name for Practice Mode's auto-played opponent --
+/// never a real MAC address, so `active_id() == BOT_BOARD_ID` is an
+/// unambiguous "is it the bot's turn" check with no extra state needed on
+/// `GameState` beyond `bot_turn` itself (see `is_bot_turn`).
+pub const BOT_BOARD_ID: &str = "__referee_bot__";
+pub const BOT_TEAM_NAME: &str = "Referee Bot";
+
+/// `pool` value a practice match's `ScoreUpdate`/`MatchResult` wire
+/// messages carry -- deliberately not 0 (reserved for the Grand Final,
+/// which would misroute the scoreboard into `ScoreboardState::GrandFinal`)
+/// or 1/2 (real pool numbers `record_result` would mutate). `MatchResult`'s
+/// own `practice` field is what `master.rs` actually branches on, though --
+/// this constant exists so a practice match's `ScoreUpdate`s still merge
+/// into `ScoreboardState::LivePoolPlay` for display like a normal match.
+pub const PRACTICE_POOL: u32 = u32::MAX;
+
+/// How long the bot waits after "flipping" its pair before "detecting" and
+/// reporting the result -- gives a human time to actually flip the real
+/// physical card at the announced position (same `flip_pending_positions`
+/// banner a real flip uses), and keeps the bot from feeling instant/robotic.
+const BOT_THINK_SECONDS: u64 = 6;
+
+/// Tracks the bot's in-flight turn between the two paced steps
+/// `maybe_play_bot_turn` drives it through: choose+flip immediately, then
+/// report once `act_at` has passed.
+struct BotTurn {
+    pos1: String,
+    pos2: String,
+    act_at: Instant,
+}
+
 /// What happened as a result of processing a `report_result` message.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResultOutcome {
@@ -98,6 +129,10 @@ pub struct GameState {
     /// `turn_start`, and blocks new student actions from being processed
     /// (see `arena.rs`'s admin-command handling). `None` while running.
     paused_remaining: Option<Duration>,
+    /// Practice Mode only: the bot's in-flight turn state, driven by
+    /// `maybe_play_bot_turn`. Always `None` in a real match (no team ever
+    /// has board id `BOT_BOARD_ID`, so `is_bot_turn` is always false there).
+    bot_turn: Option<BotTurn>,
 }
 
 impl GameState {
@@ -125,6 +160,7 @@ impl GameState {
             turn_start: Instant::now(),
             match_started_at_unix_ms,
             paused_remaining: None,
+            bot_turn: None,
         }
     }
 
@@ -264,6 +300,7 @@ impl GameState {
         self.flip2 = None;
         self.flip_revealed = false;
         self.turn_start = Instant::now();
+        self.bot_turn = None;
     }
 
     fn restart_turn_same_team(&mut self) {
@@ -271,6 +308,7 @@ impl GameState {
         self.flip2 = None;
         self.flip_revealed = false;
         self.turn_start = Instant::now();
+        self.bot_turn = None;
     }
 
     fn push_turn_signals(&self, messages: &mut Vec<(String, RefereeMessage)>) {
@@ -573,6 +611,116 @@ impl GameState {
         Some(messages)
     }
 
+    /// Practice Mode only: true exactly when it's the bot's turn (see
+    /// `BOT_BOARD_ID`) -- always false in a real match, since no real team
+    /// is ever assigned that board id.
+    pub fn is_bot_turn(&self) -> bool {
+        self.active_id() == BOT_BOARD_ID
+    }
+
+    /// Picks the bot's next pair using the same greedy strategy already
+    /// implemented in Python three times over (`demo_student_bot.py`,
+    /// `student-competition-guide.md`'s rescue Module D, PYNQ 301's local
+    /// computer opponent): a guaranteed known pair first, then a known
+    /// position paired with an unrevealed one, then two fresh unrevealed
+    /// positions. Only ever reasons about positions already in `revealed`
+    /// -- the same information a real player has via `card_revealed`
+    /// broadcasts, never peeking at the hidden grid ahead of a flip.
+    fn choose_bot_pair(&self) -> (String, String) {
+        let mut by_class: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut revealed_unmatched: Vec<&str> = Vec::new();
+        for pos in &self.revealed {
+            if self.matched.contains(pos) {
+                continue;
+            }
+            revealed_unmatched.push(pos.as_str());
+            if let Some(cls) = self.grid.get(pos) {
+                by_class.entry(cls.as_str()).or_default().push(pos.as_str());
+            }
+        }
+        revealed_unmatched.sort();
+
+        let mut class_names: Vec<&&str> = by_class.keys().collect();
+        class_names.sort();
+        for cls in class_names {
+            let positions = &by_class[cls];
+            if positions.len() >= 2 {
+                let mut sorted = positions.clone();
+                sorted.sort();
+                return (sorted[0].to_string(), sorted[1].to_string());
+            }
+        }
+
+        let mut unrevealed: Vec<&String> = self
+            .grid
+            .keys()
+            .filter(|pos| !self.revealed.contains(*pos))
+            .collect();
+        unrevealed.sort();
+
+        if let (Some(known_pos), Some(first_unrevealed)) =
+            (revealed_unmatched.first(), unrevealed.first())
+        {
+            return (known_pos.to_string(), (*first_unrevealed).clone());
+        }
+        if unrevealed.len() >= 2 {
+            return (unrevealed[0].clone(), unrevealed[1].clone());
+        }
+
+        // Board fully revealed but nothing pairs up (only possible after a
+        // wrong claim elsewhere) -- retry two unmatched revealed positions,
+        // same fallback the Python strategies use.
+        let second = revealed_unmatched
+            .get(1)
+            .copied()
+            .unwrap_or(revealed_unmatched[0]);
+        (revealed_unmatched[0].to_string(), second.to_string())
+    }
+
+    /// Called periodically by the poll loop, alongside `check_timeout`.
+    /// Drives the bot through its turn in two paced steps so a human still
+    /// has time to physically flip the real card in between: the instant
+    /// it becomes the bot's turn, choose a pair and "flip" it (via the
+    /// normal `receive_flip_both` path, so validation/broadcast/the
+    /// "flip the card now" banner all work exactly as they do for a real
+    /// flip); once `BOT_THINK_SECONDS` has passed, "detect" (read the
+    /// grid's own golden answer for the two positions it already
+    /// committed to -- not a peek ahead of the flip) and report the
+    /// truthful result via the normal `receive_result` path. No-op unless
+    /// it's currently the bot's turn.
+    pub fn maybe_play_bot_turn(&mut self, now: Instant) -> Vec<(String, RefereeMessage)> {
+        if !self.is_bot_turn() {
+            return vec![];
+        }
+        match &self.bot_turn {
+            None => {
+                let (pos1, pos2) = self.choose_bot_pair();
+                let messages = self.receive_flip_both(BOT_TEAM_NAME, &pos1, &pos2);
+                self.bot_turn = Some(BotTurn {
+                    pos1,
+                    pos2,
+                    act_at: now + Duration::from_secs(BOT_THINK_SECONDS),
+                });
+                messages
+            }
+            Some(bot_turn) if now >= bot_turn.act_at => {
+                let pos1 = bot_turn.pos1.clone();
+                let pos2 = bot_turn.pos2.clone();
+                let cls1 = self.grid.get(&pos1).cloned().unwrap_or_default();
+                let cls2 = self.grid.get(&pos2).cloned().unwrap_or_default();
+                let claim = if !cls1.is_empty() && cls1 == cls2 {
+                    "match"
+                } else {
+                    "no_match"
+                };
+                self.receive_result(BOT_TEAM_NAME, &pos1, &pos2, claim)
+                    .map(ResultOutcome::into_messages)
+                    .unwrap_or_default()
+            }
+            Some(_) => vec![],
+        }
+    }
+
     /// Handle a paid hint request from the active team for a named object.
     /// Rejects outright (no cost) if the team's score is <= 0 or they've
     /// already used both hint slots this match. Otherwise checks whether
@@ -679,6 +827,13 @@ mod tests {
         vec![
             ("alpha".to_string(), "id-a".to_string()),
             ("beta".to_string(), "id-b".to_string()),
+        ]
+    }
+
+    fn practice_teams() -> Vec<(String, String)> {
+        vec![
+            ("alpha".to_string(), "id-a".to_string()),
+            (BOT_TEAM_NAME.to_string(), BOT_BOARD_ID.to_string()),
         ]
     }
 
@@ -1343,6 +1498,124 @@ mod tests {
         assert_eq!(
             response_tier_bonus(Duration::from_secs(150)),
             crate::config::get().tier_bonus(Duration::from_secs(150))
+        );
+    }
+
+    // -- Practice Mode / bot opponent -------------------------------------
+
+    #[test]
+    fn is_bot_turn_reflects_whose_turn_it_is() {
+        let mut state = GameState::new(practice_teams(), small_grid());
+        assert!(!state.is_bot_turn()); // alpha (real team) always goes first
+
+        state
+            .receive_result("alpha", "A1", "A3", "no_match")
+            .unwrap(); // ends alpha's turn
+        assert!(state.is_bot_turn());
+    }
+
+    #[test]
+    fn maybe_play_bot_turn_is_a_noop_when_it_is_not_the_bots_turn() {
+        let mut state = GameState::new(practice_teams(), small_grid());
+        let messages = state.maybe_play_bot_turn(Instant::now());
+        assert!(messages.is_empty());
+        assert_eq!(state.pairs_found(), 0);
+    }
+
+    #[test]
+    fn maybe_play_bot_turn_flips_immediately_then_reports_after_the_think_delay() {
+        let mut state = GameState::new(practice_teams(), small_grid());
+        // Ends alpha's turn without revealing anything, so the bot starts
+        // its turn with a completely blank board -- exercises the
+        // "two fresh unrevealed positions" branch of choose_bot_pair.
+        state
+            .receive_result("alpha", "A1", "A3", "no_match")
+            .unwrap();
+        assert!(state.is_bot_turn());
+
+        let now = Instant::now();
+        let flip_messages = state.maybe_play_bot_turn(now);
+        assert!(
+            !flip_messages.is_empty(),
+            "flipping should broadcast card_revealed"
+        );
+        assert_eq!(state.pairs_found(), 0, "result not reported yet");
+
+        // Still "thinking" -- no new messages, no result yet.
+        let still_thinking = state.maybe_play_bot_turn(now);
+        assert!(still_thinking.is_empty());
+        assert_eq!(state.pairs_found(), 0);
+
+        // Past the think delay -- reports its (truthful) result.
+        let later = now + Duration::from_secs(BOT_THINK_SECONDS + 1);
+        let report_messages = state.maybe_play_bot_turn(later);
+        assert!(!report_messages.is_empty());
+    }
+
+    #[test]
+    fn choose_bot_pair_prefers_a_known_pair_over_exploring() {
+        let mut state = GameState::new(practice_teams(), small_grid());
+        // Reveal both dogs without matching them (declined claim).
+        state.receive_flip("alpha", "A1");
+        state.receive_flip("alpha", "A2");
+        state
+            .receive_result("alpha", "A1", "A2", "no_match")
+            .unwrap();
+        // A1/A2 are still `revealed` (declining doesn't un-reveal them) --
+        // the bot should recognize the known dog/dog pair immediately.
+        assert!(state.is_bot_turn());
+        let (pos1, pos2) = state.choose_bot_pair();
+        let mut pair = [pos1, pos2];
+        pair.sort();
+        assert_eq!(pair, ["A1".to_string(), "A2".to_string()]);
+    }
+
+    #[test]
+    fn choose_bot_pair_explores_with_a_known_position_when_no_pair_is_known() {
+        let mut state = GameState::new(practice_teams(), small_grid());
+        // Reveal one card of each class -- no class has two revealed
+        // positions yet, so the bot should pair a known position with an
+        // unrevealed one rather than blindly picking two fresh cells.
+        state.receive_flip("alpha", "A1");
+        state.receive_flip("alpha", "A3");
+        state
+            .receive_result("alpha", "A1", "A3", "no_match")
+            .unwrap();
+        assert!(state.is_bot_turn());
+        let (pos1, pos2) = state.choose_bot_pair();
+        assert!(
+            [&pos1, &pos2].contains(&&"A1".to_string())
+                || [&pos1, &pos2].contains(&&"A3".to_string()),
+            "expected one already-revealed position to be reused, got {pos1}/{pos2}"
+        );
+        assert_ne!(pos1, pos2);
+    }
+
+    #[test]
+    fn bot_can_win_a_practice_match_entirely_on_its_own_turns() {
+        // A degenerate but useful end-to-end check: with only two pairs on
+        // the board and the bot always answering truthfully, driving
+        // maybe_play_bot_turn forward (advancing a fake clock past the
+        // think delay each time) should complete the match.
+        let mut state = GameState::new(practice_teams(), small_grid());
+        state
+            .receive_result("alpha", "A1", "A3", "no_match")
+            .unwrap(); // hand off, reveals nothing
+        assert!(state.is_bot_turn());
+
+        let mut now = Instant::now();
+        for _ in 0..8 {
+            state.maybe_play_bot_turn(now);
+            now += Duration::from_secs(BOT_THINK_SECONDS + 1);
+            state.maybe_play_bot_turn(now);
+            if state.all_pairs_found() {
+                break;
+            }
+            now += Duration::from_secs(1);
+        }
+        assert!(
+            state.all_pairs_found(),
+            "bot should be able to finish the board on its own"
         );
     }
 }
