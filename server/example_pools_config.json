@@ -1,0 +1,5 @@
+{
+  "pool1_teams": [["alpha", "test-team-alpha"], ["beta", "test-team-beta"]],
+  "pool2_teams": [["delta", "test-team-delta"], ["epsilon", "test-team-epsilon"]],
+  "grid_id": "example_grid.json"
+}
