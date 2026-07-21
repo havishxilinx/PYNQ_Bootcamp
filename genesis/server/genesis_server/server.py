@@ -12,6 +12,11 @@ import os
 
 
 class GenesisRequestHandler(BaseHTTPRequestHandler):
+    # Well-known key used to expose the single competition-mode simulation
+    # to the stream server, which otherwise only ever sees standard-mode
+    # (create_env) sessions registered under their per-session token.
+    COMPETITION_STREAM_TOKEN = "competition"
+
     session_manager: SessionManager = None
     simulations: Dict[str, GenesisSimulation] = {}
     competition_manager: CompetitionManager = None
@@ -292,10 +297,12 @@ class GenesisRequestHandler(BaseHTTPRequestHandler):
                 params["scene"],
                 card_layout=params.get("card_layout"),
             )
+            self.simulations[self.COMPETITION_STREAM_TOKEN] = self.competition_manager.get_simulation()
             return {"status": "ok"}
 
         if action == "admin_stop_competition":
             self.competition_manager.stop()
+            self.simulations.pop(self.COMPETITION_STREAM_TOKEN, None)
             return {"status": "ok"}
 
         if action == "admin_list_card_images":
