@@ -47,7 +47,7 @@ event day.** Once you have it:
 
 ```bash
 cd <path-to-broker>
-python3 server.py --host 0.0.0.0 --port 35050 --key demokey
+venv/bin/python server.py --host 0.0.0.0 --port 35050 --key demokey
 ```
 **Watch:** the broker's own log lines — every `/send`/`/receive_all` call from any board, arena,
 or master shows up here. This is the lowest-level view of the whole system; if something isn't

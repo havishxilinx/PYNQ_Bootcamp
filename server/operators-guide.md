@@ -35,7 +35,7 @@ event day.** Once you have it:
 
 ```bash
 cd <path-to-broker>
-python3 server.py --host 0.0.0.0 --port 35050 --key <event-key>
+venv/bin/python server.py --host 0.0.0.0 --port 35050 --key <event-key>
 ```
 Pick a real key for the event (not `demokey`, which is fine for practice runs
 only). Every arena, the Master, and every student board must be given this same

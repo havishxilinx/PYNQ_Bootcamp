@@ -20,11 +20,17 @@ cd "$(dirname "$0")"
 chmod +x ./gridmind-referee
 echo "gridmind-referee binary is executable."
 
-if command -v pip3 >/dev/null 2>&1; then
-    pip3 install -r broker/requirements.txt
-    echo "Broker dependency (flask) installed."
+if command -v python3 >/dev/null 2>&1; then
+    # A venv, not a system-wide pip install: modern distros (PEP 668,
+    # "externally-managed-environment") refuse `pip install` onto system
+    # Python outright, and installing system-wide would be the wrong call
+    # even where it's still allowed.
+    python3 -m venv broker/venv
+    broker/venv/bin/pip install -r broker/requirements.txt
+    echo "Broker dependency (flask) installed into broker/venv."
+    echo "Start the broker with: cd broker && venv/bin/python server.py ..."
 else
-    echo "WARNING: pip3 not found -- install Python 3 + pip, or skip this" >&2
+    echo "WARNING: python3 not found -- install Python 3, or skip this" >&2
     echo "if this machine never runs broker/server.py." >&2
 fi
 

@@ -84,7 +84,7 @@ things that genuinely can't be pre-packaged.
 **On each server-role machine:**
 ```bash
 cd server
-./setup-server.sh        # chmod +x the binary, pip install the broker's one dependency
+./setup-server.sh        # chmod +x the binary, create broker/venv, install the broker's one dependency into it
 ```
 Then follow `server/operators-guide.md` (or `server/manual-demo-walkthrough.md`
 for a scripted curl-based rehearsal) to actually start the broker/Master/Arenas.
@@ -135,9 +135,12 @@ from source.
 
 - **Broker's Flask dependency** (`server/broker/requirements.txt`) — not
   vendored, because a compiled-wheel match can't be guaranteed offline
-  without knowing the target machine's exact Python version. This is a
-  single, extremely standard `pip3 install flask` — low risk even on a
-  machine with only intermittent internet.
+  without knowing the target machine's exact Python version. `setup-server.sh`
+  creates a venv at `broker/venv` and installs Flask into that — modern
+  distros (PEP 668, "externally-managed-environment") refuse a system-wide
+  `pip install` outright, and installing system-wide would be the wrong
+  call even where it's still allowed. Low risk either way — Flask is an
+  extremely standard package — but it stays isolated in its own venv.
 - **`requests` on each PYNQ board** — assumed already present (true on
   every PYNQ image checked so far); `pynqp2p`'s own code imports it
   directly. `setup-client.sh` checks and warns if it's missing.
@@ -175,7 +178,7 @@ The **client** side (PYNQ boards) is fully vendored for offline install,
 since boards are the ones most likely stuck on a lab-only network with no
 internet. The **server** side assumes whoever's setting up the
 broker/Master/Arena machine(s) has at least occasional internet access for
-the one `pip3 install flask` step — if that's wrong for your setup, let me
+the one `broker/venv` Flask install — if that's wrong for your setup, let me
 know and I'll vendor those wheels too (need to know the exact Python
 version on that machine first, since Flask's dependency chain includes
 compiled extensions).

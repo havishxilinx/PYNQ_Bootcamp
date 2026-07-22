@@ -49,7 +49,7 @@ Prepare the grid pool (see Part 2) before starting the Master.
 Start the broker:
 ```bash
 cd broker
-python3 server.py --host 0.0.0.0 --port 35050 --key <pick-a-real-event-key>
+venv/bin/python server.py --host 0.0.0.0 --port 35050 --key <pick-a-real-event-key>
 ```
 
 Start the Master (live registration — no `--config`):

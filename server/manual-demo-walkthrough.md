@@ -162,7 +162,7 @@ event day.**
 ```bash
 # Terminal 1 — broker
 cd <path-to-broker>
-python3 server.py --host 0.0.0.0 --port 35050 --key demokey
+venv/bin/python server.py --host 0.0.0.0 --port 35050 --key demokey
 
 # Terminal 2 — Master (no --config = live registration mode)
 cd gridmind-referee
