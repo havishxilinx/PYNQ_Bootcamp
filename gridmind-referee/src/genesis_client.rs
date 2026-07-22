@@ -37,6 +37,26 @@ impl GenesisClient {
         &self.base_url
     }
 
+    /// URL of the live MJPEG view for the single, currently-active
+    /// competition-mode match, served by Genesis's separate stream server
+    /// (`stream_server.py`) -- a different process/port than the admin
+    /// API this client posts actions to. Requires the Genesis-side fix
+    /// that registers the competition simulation under the fixed
+    /// `"competition"` key (see `GenesisRequestHandler.COMPETITION_STREAM_TOKEN`
+    /// server-side); without it this URL 404s.
+    ///
+    /// `stream_port` is a separate value from `base_url`'s own port --
+    /// Genesis's admin API and stream server listen on two different
+    /// ports on the same host (see `GENESIS_STREAM_PORT` in Genesis's own
+    /// config). Returns `None` only if `base_url` isn't a well-formed
+    /// `scheme://host[:port]` URL, which never happens for a real
+    /// deployment (defensive only).
+    pub fn competition_stream_url(&self, stream_port: u16) -> Option<String> {
+        let (scheme, rest) = self.base_url.split_once("://")?;
+        let host = rest.split(['/', ':']).next()?;
+        Some(format!("{scheme}://{host}:{stream_port}/stream/competition"))
+    }
+
     /// Starts Genesis's own "competition mode" for this match -- the only
     /// mode that exposes real per-flip arm animation (`flip_card`) and
     /// turn-gating, as opposed to the earlier `create_env`/"standard mode"
@@ -272,6 +292,30 @@ mod tests {
     fn base_url_returns_the_configured_url() {
         let client = GenesisClient::new("http://example.com:9002");
         assert_eq!(client.base_url(), "http://example.com:9002");
+    }
+
+    #[test]
+    fn competition_stream_url_swaps_in_the_stream_port_and_keeps_the_host() {
+        let client = GenesisClient::new("http://example.com:9002");
+        assert_eq!(
+            client.competition_stream_url(8080),
+            Some("http://example.com:8080/stream/competition".to_string())
+        );
+    }
+
+    #[test]
+    fn competition_stream_url_works_with_a_bare_ip_and_no_path() {
+        let client = GenesisClient::new("http://127.0.0.1:9002");
+        assert_eq!(
+            client.competition_stream_url(8080),
+            Some("http://127.0.0.1:8080/stream/competition".to_string())
+        );
+    }
+
+    #[test]
+    fn competition_stream_url_returns_none_for_a_malformed_base_url() {
+        let client = GenesisClient::new("not-a-url");
+        assert_eq!(client.competition_stream_url(8080), None);
     }
 
     #[test]

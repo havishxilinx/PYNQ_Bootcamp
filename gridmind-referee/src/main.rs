@@ -55,6 +55,13 @@ enum Command {
         /// documented default; ignored entirely when `genesis_url` is unset.
         #[arg(long, default_value = "admin123")]
         genesis_admin_password: String,
+        /// Port of this Genesis server's separate live-viewer/stream
+        /// process (`stream_server.py`), on the same host as `genesis_url`
+        /// but a different port -- must match that server's own
+        /// `GENESIS_STREAM_PORT` env var. Defaults to Genesis's own
+        /// documented default; ignored entirely when `genesis_url` is unset.
+        #[arg(long, default_value_t = 8080)]
+        genesis_stream_port: u16,
     },
 }
 
@@ -118,11 +125,13 @@ fn main() -> Result<()> {
                     gridmind_referee::p2p_client::P2pClient::new(&server, &key, &lobby_id);
                 let join_registry = join_registry.clone();
                 let team_secrets = team_secrets.clone();
+                let master_state = master_state.clone();
                 std::thread::spawn(move || {
                     gridmind_referee::join_listener::run_join_listener(
                         lobby_client,
                         join_registry,
                         team_secrets,
+                        master_state,
                     );
                 });
             }
@@ -149,14 +158,18 @@ fn main() -> Result<()> {
             arena_num,
             genesis_url,
             genesis_admin_password,
+            genesis_stream_port,
         } => run_arena(
             &server,
             &key,
             &id,
             &master_id,
             arena_num,
-            genesis_url,
-            genesis_admin_password,
+            gridmind_referee::arena::GenesisConfig {
+                url: genesis_url,
+                admin_password: genesis_admin_password,
+                stream_port: genesis_stream_port,
+            },
         ),
     }
 }

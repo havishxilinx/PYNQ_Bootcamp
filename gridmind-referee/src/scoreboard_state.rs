@@ -39,6 +39,10 @@ pub struct LiveArenaState {
     /// "flip the card now" banner while this is set, and hides it once
     /// cleared.
     pub flip_pending_positions: Option<(String, String)>,
+    /// URL of Genesis's live MJPEG view for this match, for the frontend
+    /// to embed directly -- `None` whenever there's nothing to show
+    /// (Genesis unconfigured, practice match, or an older Genesis server).
+    pub genesis_stream_url: Option<String>,
 }
 
 /// A pool's roster and round-robin schedule size, shown in the Idle
@@ -208,6 +212,7 @@ mod tests {
             match_started_at_unix_ms: 1_800_000_000_000,
             is_paused: false,
             flip_pending_positions: None,
+            genesis_stream_url: None,
         }
     }
 

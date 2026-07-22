@@ -31,6 +31,14 @@ pub enum ArenaToMaster {
         // arena binaries that predate this field omit it entirely.
         #[serde(default)]
         flip_pending_positions: Option<(String, String)>,
+        /// URL of Genesis's live MJPEG view for this match, for the arena
+        /// UI to embed directly -- `None` when Genesis isn't configured
+        /// for this arena, this is a practice match, or the connected
+        /// Genesis server predates the competition-mode streaming fix.
+        /// `#[serde(default)]` so older arena binaries that predate this
+        /// field still parse.
+        #[serde(default)]
+        genesis_stream_url: Option<String>,
     },
     #[serde(rename = "match_result")]
     MatchResult {
@@ -161,6 +169,39 @@ mod tests {
                 assert_eq!(
                     flip_pending_positions,
                     Some(("B3".to_string(), "D5".to_string()))
+                );
+            }
+            other => panic!("expected ScoreUpdate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn score_update_defaults_genesis_stream_url_to_none_when_absent() {
+        let json = r#"{"type":"score_update","arena":1,"pool":1,"scores":{"alpha":5,"beta":3},"pairs_found":7,"total_pairs":15,"matched":{"A1":"dog"},"all_positions":["A1","A2"],"active_team":"alpha","turn_seconds_remaining":37,"streak":{"alpha":2,"beta":0},"hints_used":{"alpha":0,"beta":1},"puzzle_winner":"alpha","match_started_at_unix_ms":1784000000000,"is_paused":false}"#;
+        let msg: ArenaToMaster = serde_json::from_str(json).unwrap();
+        match msg {
+            ArenaToMaster::ScoreUpdate {
+                genesis_stream_url,
+                ..
+            } => {
+                assert_eq!(genesis_stream_url, None);
+            }
+            other => panic!("expected ScoreUpdate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn score_update_round_trips_genesis_stream_url_when_present() {
+        let json = r#"{"type":"score_update","arena":1,"pool":1,"scores":{"alpha":5,"beta":3},"pairs_found":7,"total_pairs":15,"matched":{"A1":"dog"},"all_positions":["A1","A2"],"active_team":"alpha","turn_seconds_remaining":37,"streak":{"alpha":2,"beta":0},"hints_used":{"alpha":0,"beta":1},"puzzle_winner":"alpha","match_started_at_unix_ms":1784000000000,"is_paused":false,"genesis_stream_url":"http://127.0.0.1:8080/stream/competition"}"#;
+        let msg: ArenaToMaster = serde_json::from_str(json).unwrap();
+        match msg {
+            ArenaToMaster::ScoreUpdate {
+                genesis_stream_url,
+                ..
+            } => {
+                assert_eq!(
+                    genesis_stream_url,
+                    Some("http://127.0.0.1:8080/stream/competition".to_string())
                 );
             }
             other => panic!("expected ScoreUpdate, got {other:?}"),

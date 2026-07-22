@@ -61,6 +61,31 @@ pub fn generate_team_secret() -> String {
         .collect()
 }
 
+/// Same team name -> same 8-character secret, every time. `--config` mode
+/// (see `run_master`) has no save file and previously called
+/// `generate_team_secret` fresh on every process start, silently
+/// invalidating every board's already-typed-in `TEAM_SECRET` on any
+/// restart -- with `join_listener.rs`'s silent-drop-on-mismatch behavior,
+/// this looked exactly like "worked once, never again, no visible reason".
+/// Safe to make deterministic here specifically because config mode is a
+/// fixed, operator-supplied team list (not students self-registering
+/// live), so there's no enumeration/security reason to randomize it the
+/// way live registration's `generate_team_secret` still does.
+pub fn deterministic_team_secret(team: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    team.hash(&mut hasher);
+    let mut value = hasher.finish();
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    (0..8)
+        .map(|_| {
+            let ch = ALPHABET[(value % ALPHABET.len() as u64) as usize];
+            value /= ALPHABET.len() as u64;
+            ch as char
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +133,28 @@ mod tests {
         let a = generate_team_secret();
         let b = generate_team_secret();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn deterministic_team_secret_is_the_same_across_repeated_calls() {
+        assert_eq!(
+            deterministic_team_secret("red"),
+            deterministic_team_secret("red")
+        );
+    }
+
+    #[test]
+    fn deterministic_team_secret_differs_for_different_team_names() {
+        assert_ne!(
+            deterministic_team_secret("red"),
+            deterministic_team_secret("blue")
+        );
+    }
+
+    #[test]
+    fn deterministic_team_secret_produces_eight_alphanumeric_characters() {
+        let secret = deterministic_team_secret("red");
+        assert_eq!(secret.len(), 8);
+        assert!(secret.chars().all(|c| c.is_ascii_alphanumeric()));
     }
 }

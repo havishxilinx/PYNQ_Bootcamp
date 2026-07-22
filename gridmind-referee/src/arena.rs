@@ -42,6 +42,16 @@ struct AssignedMatch {
     is_practice: bool,
 }
 
+/// Groups `run_arena`'s Genesis-related CLI parameters -- its parameter
+/// list crossed clippy's `too_many_arguments` threshold once the stream
+/// port was added. `url: None` means Genesis is unconfigured for this
+/// arena entirely; the other two fields are then unused.
+pub struct GenesisConfig {
+    pub url: Option<String>,
+    pub admin_password: String,
+    pub stream_port: u16,
+}
+
 /// Runs forever: waits for a match assignment from the Master, plays it
 /// to completion, reports the result, then waits for the next one.
 ///
@@ -60,21 +70,41 @@ pub fn run_arena(
     my_id: &str,
     master_id: &str,
     arena_num: u32,
-    genesis_url: Option<String>,
-    genesis_admin_password: String,
+    genesis_config: GenesisConfig,
 ) -> Result<()> {
     let client = P2pClient::new(server, key, my_id);
-    let genesis = genesis_url.map(|url| GenesisClient::new(&url));
+    let genesis = genesis_config.url.map(|url| GenesisClient::new(&url));
     loop {
-        let assignment = wait_for_assignment(&client)?;
-        run_one_match(
+        // A communication failure here used to propagate straight out of
+        // `run_arena` via `?` and kill the whole Arena process -- even
+        // after `P2pClient`'s own internal retries are exhausted (a real,
+        // extended broker/network outage, not just a blip), losing this
+        // one match/assignment attempt is far better than losing the
+        // entire arena for the rest of the tournament. Log loudly (this is
+        // exactly what operators are told to watch, see operators-guide.md)
+        // and go back to waiting for the next assignment instead.
+        let assignment = match wait_for_assignment(&client) {
+            Ok(assignment) => assignment,
+            Err(err) => {
+                eprintln!(
+                    "arena {arena_num}: failed to receive the next match assignment: {err:#} -- retrying"
+                );
+                continue;
+            }
+        };
+        if let Err(err) = run_one_match(
             &client,
             master_id,
             arena_num,
             assignment,
             genesis.as_ref(),
-            &genesis_admin_password,
-        )?;
+            &genesis_config.admin_password,
+            genesis_config.stream_port,
+        ) {
+            eprintln!(
+                "arena {arena_num}: match ended early due to a communication error: {err:#} -- waiting for the next assignment"
+            );
+        }
     }
 }
 
@@ -142,6 +172,7 @@ fn run_one_match(
     assignment: AssignedMatch,
     genesis: Option<&GenesisClient>,
     genesis_admin_password: &str,
+    genesis_stream_port: u16,
 ) -> Result<()> {
     let pool_num = assignment.pool;
     let grid = load_grid(&assignment.grid_id)?;
@@ -154,6 +185,13 @@ fn run_one_match(
     } else {
         genesis
     };
+    // `None` whenever Genesis isn't configured for this arena (or this is
+    // a practice match) -- also `None` if the configured Genesis server
+    // predates the competition-mode streaming fix, since the resulting
+    // URL simply 404s and the arena UI hides the video zone on a broken
+    // image rather than erroring.
+    let genesis_stream_url =
+        genesis.and_then(|g| g.competition_stream_url(genesis_stream_port));
     // Order teams so the puzzle-race winner goes first (GameState always
     // starts with teams[0] active) -- for a practice match this is always
     // team_a, since `wait_for_assignment` sets `first_turn_team` to it.
@@ -249,6 +287,7 @@ fn run_one_match(
                         state: &state,
                         now: Instant::now(),
                         puzzle_winner: &assignment.first_turn_team,
+                        genesis_stream_url: genesis_stream_url.clone(),
                     },
                 )?;
                 continue;
@@ -298,6 +337,7 @@ fn run_one_match(
                     state: &state,
                     now: Instant::now(),
                     puzzle_winner: &assignment.first_turn_team,
+                    genesis_stream_url: genesis_stream_url.clone(),
                 },
             )?;
         }
@@ -331,6 +371,7 @@ fn run_one_match(
                         state: &state,
                         now: Instant::now(),
                         puzzle_winner: &assignment.first_turn_team,
+                        genesis_stream_url: genesis_stream_url.clone(),
                     },
                 )?;
             }
@@ -353,18 +394,21 @@ fn run_one_match(
 /// A struct keeps future field additions a one-line change here instead
 /// of a change at every one of this function's three call sites.
 ///
-/// Genesis fields are deliberately NOT included: they were only ever used
-/// to build the scoreboard's live video-stream URL, which only worked for
-/// Genesis's "standard mode" sessions. Competition mode (needed for real
-/// per-flip arm animation, see `GenesisClient::start_competition`) has no
-/// per-match token to stream from at all, so that embed is gone -- Genesis
-/// connection details now only flow to students directly via `GameStart`.
+/// `genesis_stream_url` is computed once per match (not per report) in
+/// `run_one_match` and threaded through unchanged -- it only depends on
+/// whether Genesis is configured for this arena, not on live game state.
+/// It was dropped entirely once GridMind switched to competition mode
+/// (standard-mode's per-session stream token doesn't exist in competition
+/// mode), and is only back now that Genesis's own `admin_start_competition`
+/// handler registers its simulation under a fixed stream key -- see
+/// `GenesisClient::competition_stream_url`.
 struct MatchReport<'a> {
     arena: u32,
     pool: u32,
     state: &'a GameState,
     now: Instant,
     puzzle_winner: &'a str,
+    genesis_stream_url: Option<String>,
 }
 
 fn report_to_master(client: &P2pClient, master_id: &str, report: MatchReport) -> Result<()> {
@@ -378,6 +422,7 @@ fn report_to_master(client: &P2pClient, master_id: &str, report: MatchReport) ->
         all_positions: report.state.all_positions(),
         active_team: report.state.active_team().to_string(),
         turn_seconds_remaining: report.state.turn_seconds_remaining(report.now),
+        genesis_stream_url: report.genesis_stream_url,
         streak: report
             .state
             .scores()
@@ -400,9 +445,22 @@ fn report_to_master(client: &P2pClient, master_id: &str, report: MatchReport) ->
     client.send(master_id, &serde_json::to_string(&msg)?)
 }
 
+/// Delivers every `(recipient, message)` pair, continuing past a single
+/// recipient's delivery failure (after `P2pClient::send`'s own internal
+/// retries are exhausted) instead of aborting the rest of the batch --
+/// `receive_flip_both` broadcasts 4 messages (2 positions x 2 teams) in
+/// one batch, and losing delivery to one recipient must not also cost the
+/// other 3 their messages. Only a `serde_json` serialization failure
+/// (which should never happen for a `RefereeMessage`) still propagates,
+/// since that's a genuine programming bug, not a network condition.
 fn send_all(client: &P2pClient, messages: Vec<(String, RefereeMessage)>) -> Result<()> {
     for (id, msg) in messages {
-        client.send(&id, &serde_json::to_string(&msg)?)?;
+        let payload = serde_json::to_string(&msg)?;
+        if let Err(err) = client.send(&id, &payload) {
+            eprintln!(
+                "arena: failed to deliver a message to {id} after retries: {err:#} -- {id} may now be stuck waiting on it"
+            );
+        }
     }
     Ok(())
 }

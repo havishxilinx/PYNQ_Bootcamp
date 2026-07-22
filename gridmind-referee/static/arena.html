@@ -20,10 +20,13 @@
   .riddle-text { font-size: 20px; font-weight: 600; text-align: center; padding: 10px 0 16px; }
   .flip-banner { background: #3a2e00; border: 2px solid #ffcc00; color: #ffdd55; padding: 10px 14px; font-size: 20px; font-weight: 800; text-align: center; letter-spacing: 0.5px; margin-bottom: 10px; border-radius: 6px; }
   .idle { text-align: center; opacity: 0.6; padding: 40px; font-size: 20px; }
+  .video-zone { display: none; margin-top: 14px; border: 2px solid #ED1C24; border-radius: 8px; overflow: hidden; background: #000; }
+  .video-zone img { display: block; width: 100%; height: auto; }
 </style>
 </head>
 <body>
 <div id="root">connecting...</div>
+<div id="video-zone" class="video-zone"><img id="video-stream" alt="Live simulation view"></div>
 
 <script>
 const root = document.getElementById('root');
@@ -195,6 +198,28 @@ function renderPregameStrip(pregame) {
     <div id="pregame-timer-label" style="opacity:0.7;font-size:13px">${secs}s remaining</div>`;
 }
 
+// The video element lives outside #root (never touched by root.innerHTML
+// replacement below) specifically so re-renders on every score update
+// don't tear down and restart the MJPEG connection -- only assign `img.src`
+// when the URL actually changes. `onerror` hides the whole zone so an
+// unreachable/unpatched Genesis server (see `GenesisClient::competition_stream_url`)
+// degrades to simply not showing video, not a broken-image icon.
+const videoZone = document.getElementById('video-zone');
+const videoImg = document.getElementById('video-stream');
+videoImg.onerror = () => { videoZone.style.display = 'none'; };
+
+function updateVideoZone(streamUrl) {
+  if (!streamUrl) {
+    videoZone.style.display = 'none';
+    videoImg.removeAttribute('src');
+    return;
+  }
+  if (videoImg.getAttribute('src') !== streamUrl) {
+    videoImg.src = streamUrl;
+  }
+  videoZone.style.display = 'block';
+}
+
 function render(state) {
   let arena = null;
   let pregame = null;
@@ -215,6 +240,8 @@ function render(state) {
   } else {
     idleMessage = `Tournament phase: ${esc(state.phase)}`;
   }
+
+  updateVideoZone(arena ? arena.genesis_stream_url : null);
 
   if (pregame) {
     root.innerHTML = `<div class="strip">${renderPregameStrip(pregame)}</div>`;

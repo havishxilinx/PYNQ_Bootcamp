@@ -41,6 +41,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/admin/resume", post(admin_resume))
         .route("/api/admin/stop", post(admin_stop))
         .route("/api/admin/finish", post(admin_finish))
+        .route("/api/admin/resend-pregame", post(admin_resend_pregame))
+        .route("/api/admin/restart-pregame", post(admin_restart_pregame))
         .route("/api/start-practice-match", post(start_practice_match))
         .with_state(state)
 }
@@ -317,6 +319,37 @@ async fn admin_finish(
         Err(response) => return response,
     };
     send_result_status(sender.try_send(crate::master::AdminCommand::Finish))
+}
+
+/// Resends the current pregame stage's content (riddle or free hint)
+/// unchanged, to whichever teams' MACs are currently known -- for "a team
+/// says they never got it". A no-op (silently ignored, not an error) if
+/// this arena has no pregame ceremony in progress right now; see
+/// `poll_pregame_admin_commands` in `master.rs`.
+async fn admin_resend_pregame(
+    State(state): State<AppState>,
+    Json(body): Json<AdminArenaRequest>,
+) -> impl IntoResponse {
+    let sender = match admin_sender(&state, body.arena) {
+        Ok(sender) => sender,
+        Err(response) => return response,
+    };
+    send_result_status(sender.try_send(crate::master::AdminCommand::ResendPregame))
+}
+
+/// Restarts this arena's current pregame stage from scratch -- a fresh
+/// riddle and deadline during the puzzle race, or a fresh free hint and
+/// deadline during the free-hint window. Same no-op-if-nothing-in-progress
+/// behavior as `admin_resend_pregame`.
+async fn admin_restart_pregame(
+    State(state): State<AppState>,
+    Json(body): Json<AdminArenaRequest>,
+) -> impl IntoResponse {
+    let sender = match admin_sender(&state, body.arena) {
+        Ok(sender) => sender,
+        Err(response) => return response,
+    };
+    send_result_status(sender.try_send(crate::master::AdminCommand::RestartPregame))
 }
 
 /// True if `arena` currently has a real match live or its pre-game
@@ -887,6 +920,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn admin_resend_pregame_sends_on_the_admin_channel() {
+        let (state, mut rx) = test_app_state();
+        let app = build_router(state);
+        let response = post_json(app, "/api/admin/resend-pregame", r#"{"arena":1}"#).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            rx.admin_arena1.try_recv(),
+            Ok(crate::master::AdminCommand::ResendPregame)
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_restart_pregame_sends_on_the_arena_two_admin_channel() {
+        let (state, mut rx) = test_app_state();
+        let app = build_router(state);
+        let response = post_json(app, "/api/admin/restart-pregame", r#"{"arena":2}"#).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            rx.admin_arena2.try_recv(),
+            Ok(crate::master::AdminCommand::RestartPregame)
+        );
+    }
+
+    #[tokio::test]
     async fn admin_endpoints_reject_an_arena_number_other_than_one_or_two() {
         let (state, _rx) = test_app_state();
         let app = build_router(state);
@@ -1070,6 +1127,7 @@ mod tests {
             match_started_at_unix_ms: 1_800_000_000_000,
             is_paused: false,
             flip_pending_positions: None,
+            genesis_stream_url: None,
         }
     }
 }

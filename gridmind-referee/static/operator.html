@@ -139,6 +139,14 @@
     </div>
     <button onclick="startPracticeMatch()" style="margin-top:8px;">Start Practice Match</button>
   </div>
+  <div class="pool" id="pregame-panel-1-wrap" style="display:none;">
+    <h3>Arena 1 -- Pre-Game Ceremony</h3>
+    <div id="pregame-panel-1" class="admin-panel"></div>
+  </div>
+  <div class="pool" id="pregame-panel-2-wrap" style="display:none;">
+    <h3>Arena 2 -- Pre-Game Ceremony</h3>
+    <div id="pregame-panel-2" class="admin-panel"></div>
+  </div>
   <div class="pool" id="admin-panel-1-wrap" style="display:none;">
     <h3>Arena 1 -- Live Match Admin</h3>
     <div id="admin-panel-1" class="admin-panel"></div>
@@ -387,6 +395,45 @@ function adminFinish(arenaNum) {
   postAdmin('finish', { arena: arenaNum });
 }
 
+function resendPregame(arenaNum) { postAdmin('resend-pregame', { arena: arenaNum }); }
+
+function restartPregame(arenaNum) {
+  if (!confirm(`Restart the pre-game ceremony on Arena ${arenaNum}? This picks a fresh riddle/free hint and resets its timer.`)) return;
+  postAdmin('restart-pregame', { arena: arenaNum });
+}
+
+/// Renders (or hides) one arena's pre-game ceremony panel -- shown only
+/// while `arena{N}_pregame` is set (the puzzle-race or free-hint window,
+/// before the match's own `LiveArenaState` exists). Exists mainly to
+/// surface "Resend"/"Restart" for a team that says they never received
+/// the riddle/hint -- see the incident that prompted this panel: the
+/// riddle send is otherwise a single best-effort attempt with zero
+/// operator-facing feedback either way.
+function renderPregamePanel(arenaNum, pregame) {
+  const wrap = document.getElementById(`pregame-panel-${arenaNum}-wrap`);
+  const container = document.getElementById(`pregame-panel-${arenaNum}`);
+  if (!pregame) {
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = 'block';
+
+  const stageLabel = pregame.stage === 'puzzle_race' ? 'Puzzle Race' : 'Free Hint';
+  const riddleLine = pregame.stage === 'puzzle_race'
+    ? `<div>Riddle: <em>${pregame.riddle}</em></div>`
+    : '<div>Free hint fragments already sent as QR codes.</div>';
+  const secondsLeft = Math.max(0, Math.round((pregame.deadline_unix_ms - Date.now()) / 1000));
+
+  container.innerHTML = `
+    <div>${pregame.team_a} vs ${pregame.team_b} -- ${stageLabel} (${secondsLeft}s left)</div>
+    ${riddleLine}
+    <div class="admin-actions">
+      <button onclick="resendPregame(${arenaNum})">Resend</button>
+      <button class="danger" onclick="restartPregame(${arenaNum})">Restart</button>
+    </div>
+  `;
+}
+
 // ── Practice Mode ────────────────────────────────────────────────────────────
 async function startPracticeMatch() {
   const arena = parseInt(document.getElementById('practice-arena').value, 10);
@@ -454,12 +501,16 @@ function renderSchedule(containerId, entries, poolLabel, arenaNum) {
     const div = document.createElement('div');
     div.className = 'schedule-entry';
 
+    // The synthetic Grand Final "ready" entry has no grid_id yet -- its
+    // grid isn't picked until the operator actually submits it (see
+    // `prompt_and_assign` in master.rs).
+    const gridLabel = entry.grid_id ? ` — grid: ${entry.grid_id}` : '';
     let label;
     if (entry.status === 'complete') {
-      label = `${entry.team_a} vs ${entry.team_b} — complete (${entry.winner} won)`;
+      label = `${entry.team_a} vs ${entry.team_b} — complete (${entry.winner} won)${gridLabel}`;
       div.classList.add('disabled-entry');
     } else {
-      label = `${entry.team_a} vs ${entry.team_b} — ${entry.status}`;
+      label = `${entry.team_a} vs ${entry.team_b} — ${entry.status}${gridLabel}`;
       if (entry.status === 'ready') {
         div.classList.add('ready');
         div.title = 'Click to assign and start this match';
@@ -537,12 +588,18 @@ function render(state) {
   if (state.phase === 'live_pool_play') {
     renderAdminPanel(1, state.arena1);
     renderAdminPanel(2, state.arena2);
+    renderPregamePanel(1, state.arena1_pregame);
+    renderPregamePanel(2, state.arena2_pregame);
   } else if (state.phase === 'grand_final') {
     renderAdminPanel(1, state.arena_num === 1 ? state.arena : null);
     renderAdminPanel(2, state.arena_num === 2 ? state.arena : null);
+    renderPregamePanel(1, null);
+    renderPregamePanel(2, null);
   } else {
     renderAdminPanel(1, null);
     renderAdminPanel(2, null);
+    renderPregamePanel(1, null);
+    renderPregamePanel(2, null);
   }
 
   if (isSchedule) {

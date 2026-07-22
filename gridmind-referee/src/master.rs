@@ -379,26 +379,46 @@ pub enum AdminCommand {
         team_mac: String,
         grid_id: String,
     },
+    /// Resends the current pregame stage's content (the puzzle-race riddle,
+    /// or the free-hint fragments) to both teams' currently-known MACs,
+    /// without resetting anything -- an operator escape hatch for "a team
+    /// says they never got it". Handled entirely within
+    /// `run_arena_assignment_loop`/`prompt_and_assign`/`send_free_hint`;
+    /// never reaches the Arena process (no corresponding `MasterToArena`
+    /// variant), since the pregame ceremony is Master-side, not Arena-side.
+    ResendPregame,
+    /// Restarts this arena's current pregame stage from scratch: a fresh
+    /// riddle and deadline during the puzzle race, or a fresh free hint and
+    /// deadline during the free-hint window -- for a match that's gotten
+    /// stuck for any reason. Also Master-side only, same as `ResendPregame`.
+    RestartPregame,
 }
 
 impl AdminCommand {
-    fn into_wire_message(self) -> crate::master_messages::MasterToArena {
+    /// `None` for the two pregame commands, which are handled locally by
+    /// whichever function is currently blocked waiting on the pregame
+    /// ceremony (see `poll_pregame_admin_commands`) and never forwarded to
+    /// the Arena process at all.
+    fn into_wire_message(self) -> Option<crate::master_messages::MasterToArena> {
         use crate::master_messages::MasterToArena;
         match self {
-            AdminCommand::SetScore { team, score } => MasterToArena::AdminSetScore { team, score },
-            AdminCommand::Pause => MasterToArena::AdminPause,
-            AdminCommand::Resume => MasterToArena::AdminResume,
-            AdminCommand::Stop => MasterToArena::AdminStop,
-            AdminCommand::Finish => MasterToArena::AdminFinish,
+            AdminCommand::SetScore { team, score } => {
+                Some(MasterToArena::AdminSetScore { team, score })
+            }
+            AdminCommand::Pause => Some(MasterToArena::AdminPause),
+            AdminCommand::Resume => Some(MasterToArena::AdminResume),
+            AdminCommand::Stop => Some(MasterToArena::AdminStop),
+            AdminCommand::Finish => Some(MasterToArena::AdminFinish),
             AdminCommand::StartPractice {
                 team_name,
                 team_mac,
                 grid_id,
-            } => MasterToArena::AssignPracticeMatch {
+            } => Some(MasterToArena::AssignPracticeMatch {
                 team_a: team_name,
                 team_a_id: team_mac,
                 grid_id,
-            },
+            }),
+            AdminCommand::ResendPregame | AdminCommand::RestartPregame => None,
         }
     }
 }
@@ -604,9 +624,18 @@ pub fn run_master(
             // there's no ScoreboardState::Registration screen to display
             // secrets on -- print them to the console instead, or the
             // operator would have no way to relay them to students.
+            //
+            // Deterministic (not `generate_team_secret`'s random one) --
+            // config mode has no save file, so a random secret would
+            // silently change on every restart, invalidating whatever a
+            // board already has typed into `TEAM_SECRET` with no visible
+            // error anywhere (`join_listener.rs` drops a mismatched secret
+            // silently). Config mode is a fixed, operator-supplied team
+            // list, not live self-registration, so there's no
+            // enumeration/security reason to randomize it.
             println!("Team secrets for join_competition (config mode -- no registration screen to show these):");
             for name in pool1_names.iter().chain(pool2_names.iter()) {
-                let secret = crate::team_secrets::generate_team_secret();
+                let secret = crate::team_secrets::deterministic_team_secret(name);
                 println!("  {name}: {secret}");
                 team_secrets.set(name, secret);
             }
@@ -643,20 +672,30 @@ pub fn run_master(
                         state.pool2_schedule.unwrap_or_default(),
                     )
                 }
-                // A partial (not-yet-closed) save is intentionally not
-                // replayed back into the registration UI -- resuming mid-
-                // registration would need `run_registration_phase` to seed
-                // its rosters from the saved teams first, which is a real
-                // gap left for a future pass; today it only guarantees
-                // resuming a *closed* registration (the main Tuesday ->
-                // Thursday scenario), same as the design's primary case.
-                _ => {
+                // A partial (not-yet-closed) save is replayed back into
+                // the registration UI via `run_registration_phase`'s
+                // `seed` parameter -- restores already-registered teams
+                // (and their secrets) if the Master restarts mid-
+                // registration, instead of silently forgetting them.
+                Some(partial_state) => {
                     let (tournament, _board_ids, _grid_id) = run_registration_phase(
                         &master_state,
                         &mut rx.registration,
                         &team_secrets,
                         SAVE_PATH,
                         &grid_pool,
+                        Some(partial_state),
+                    )?;
+                    tournament
+                }
+                None => {
+                    let (tournament, _board_ids, _grid_id) = run_registration_phase(
+                        &master_state,
+                        &mut rx.registration,
+                        &team_secrets,
+                        SAVE_PATH,
+                        &grid_pool,
+                        None,
                     )?;
                     tournament
                 }
@@ -745,6 +784,7 @@ pub fn run_master(
                         match_started_at_unix_ms,
                         is_paused,
                         flip_pending_positions,
+                        genesis_stream_url,
                     } => {
                         println!(
                             "[arena {arena}, pool {pool}] {pairs_found}/{total_pairs} pairs, scores: {scores:?}"
@@ -767,6 +807,7 @@ pub fn run_master(
                             match_started_at_unix_ms,
                             is_paused,
                             flip_pending_positions,
+                            genesis_stream_url,
                         };
                         let (pool1_standings, pool2_standings, pool1_schedule, pool2_schedule) = {
                             let t = tournament.lock().expect("tournament lock poisoned");
@@ -972,6 +1013,7 @@ fn run_registration_phase(
     team_secrets: &crate::team_secrets::TeamSecrets,
     save_path: &str,
     grid_pool: &[String],
+    seed: Option<SavedTournamentState>,
 ) -> Result<(
     Tournament,
     std::collections::HashMap<String, String>,
@@ -981,6 +1023,42 @@ fn run_registration_phase(
     let mut pool2_names: Vec<String> = Vec::new();
     let mut pool1_teams: Vec<RegisteredTeam> = Vec::new();
     let mut pool2_teams: Vec<RegisteredTeam> = Vec::new();
+
+    // Restore any teams already registered before an earlier Master
+    // process exited mid-registration (a save file exists, but
+    // `CloseRegistration` was never sent) -- without this, a restart at
+    // this stage silently forgot every already-registered team, forcing
+    // them to re-register and get a fresh secret that invalidates
+    // whatever they already typed into their board's `TEAM_SECRET`, with
+    // no error anywhere (`join_listener.rs` drops a mismatch silently).
+    if let Some(state) = seed {
+        for team in state.pool1_teams {
+            pool1_names.push(team.name.clone());
+            team_secrets.set(&team.name, team.secret.clone());
+            pool1_teams.push(team);
+        }
+        for team in state.pool2_teams {
+            pool2_names.push(team.name.clone());
+            team_secrets.set(&team.name, team.secret.clone());
+            pool2_teams.push(team);
+        }
+        println!(
+            "Resuming saved registration from {save_path}: {} team(s) already registered (pool 1: {}, pool 2: {}).",
+            pool1_teams.len() + pool2_teams.len(),
+            pool1_teams.len(),
+            pool2_teams.len()
+        );
+        master_state.update(ScoreboardState::Registration {
+            pool1: PoolRegistration {
+                teams: pool1_teams.clone(),
+                schedule: build_schedule_entries(&pool1_names, "(grid assigned at close)"),
+            },
+            pool2: PoolRegistration {
+                teams: pool2_teams.clone(),
+                schedule: build_schedule_entries(&pool2_names, "(grid assigned at close)"),
+            },
+        });
+    }
 
     println!("Waiting for teams to register via the web console...");
 
@@ -1251,9 +1329,19 @@ fn run_arena_assignment_loop(
         // Relay any pending operator overrides straight to this arena's
         // process -- harmless to check even outside an active match (the
         // arena just discards an admin command with nothing to apply it
-        // to; see `wait_for_assignment` in `arena.rs`).
+        // to; see `wait_for_assignment` in `arena.rs`). Only reached for
+        // `ResendPregame`/`RestartPregame` when no pregame ceremony is
+        // actually in progress on this arena (they're otherwise consumed
+        // directly by `prompt_and_assign`/`send_free_hint` via
+        // `poll_pregame_admin_commands` while a ceremony is live) -- with
+        // nothing to resend or restart, they're simply dropped.
         while let Ok(command) = admin_rx.try_recv() {
-            let wire_message = command.into_wire_message();
+            let Some(wire_message) = command.into_wire_message() else {
+                eprintln!(
+                    "arena {arena_num}: no pregame ceremony in progress, ignoring resend/restart request"
+                );
+                continue;
+            };
             let result = serde_json::to_string(&wire_message)
                 .map_err(anyhow::Error::from)
                 .and_then(|json| ctx.client.send(arena_id, &json));
@@ -1284,6 +1372,7 @@ fn run_arena_assignment_loop(
                         grid_id: &grid_id,
                     },
                     &mut match_start_rx,
+                    &mut admin_rx,
                 )?;
             }
             NextAction::AssignGrandFinal {
@@ -1337,6 +1426,7 @@ fn run_arena_assignment_loop(
                         grid_id: &grid_id,
                     },
                     &mut match_start_rx,
+                    &mut admin_rx,
                 )?;
             }
             NextAction::Champion { winner } => {
@@ -1350,6 +1440,66 @@ fn run_arena_assignment_loop(
             }
         }
     }
+}
+
+/// What an operator asked for, if anything, the last time
+/// `poll_pregame_admin_commands` drained the admin channel.
+enum PregameSignal {
+    None,
+    /// Resend the current pregame content unchanged (e.g. "a team says
+    /// they never got the riddle").
+    Resend,
+    /// Restart the current pregame stage from scratch (fresh riddle/free
+    /// hint and deadline).
+    Restart,
+}
+
+/// Drains `admin_rx` during a pregame wait (the puzzle-race or free-hint
+/// stage, both of which otherwise block synchronously on their own
+/// deadline/channel with no other opportunity to notice new admin
+/// commands). `ResendPregame`/`RestartPregame` are reported back to the
+/// caller to act on, since only the caller knows what "resend"/"restart"
+/// means for its own stage; everything else is forwarded straight to the
+/// Arena process, same as the outer loop's own admin drain. If both a
+/// resend and a restart arrive in the same drain, restart wins (it's a
+/// superset of resend).
+fn poll_pregame_admin_commands(
+    ctx: &AssignContext,
+    arena_id: &str,
+    admin_rx: &mut tokio::sync::mpsc::Receiver<AdminCommand>,
+) -> PregameSignal {
+    let mut signal = PregameSignal::None;
+    while let Ok(command) = admin_rx.try_recv() {
+        match command {
+            AdminCommand::RestartPregame => signal = PregameSignal::Restart,
+            AdminCommand::ResendPregame => {
+                if !matches!(signal, PregameSignal::Restart) {
+                    signal = PregameSignal::Resend;
+                }
+            }
+            other => {
+                if let Some(wire_message) = other.into_wire_message() {
+                    let result = serde_json::to_string(&wire_message)
+                        .map_err(anyhow::Error::from)
+                        .and_then(|json| ctx.client.send(arena_id, &json));
+                    if let Err(err) = result {
+                        eprintln!(
+                            "arena: failed to relay admin command during pregame: {err:#}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    signal
+}
+
+/// Milliseconds since the Unix epoch, right now.
+fn current_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock is before the Unix epoch")
+        .as_millis() as u64
 }
 
 /// Picks a random (position, object) pair from the grid. Every object in
@@ -1378,50 +1528,34 @@ fn grid_dimensions(grid: &std::collections::HashMap<String, String>) -> (u32, u3
     (max_row, max_col)
 }
 
-/// Generates and sends the shared, non-competitive free hint (grid-derived
-/// object + quadrant riddle, split into QR fragments both teams must
-/// assemble themselves) and shows its own countdown on the scoreboard,
-/// right after the pre-game riddle stage and before the match actually
-/// starts. Best-effort on send -- a failed free-hint delivery should never
-/// block or fail the match itself.
-fn send_free_hint(
-    ctx: &AssignContext,
-    arena: u32,
-    matchup: &Matchup,
-    grid_id: &str,
-    team_a_id: &str,
-    team_b_id: &str,
-) -> Result<()> {
-    let Ok(grid) = crate::grid::load_grid(grid_id) else {
-        return Ok(());
-    };
+/// Picks a fresh grid-derived object + quadrant riddle and splits it into
+/// QR fragments -- the content of one free-hint stage. Pulled out of
+/// `send_free_hint` so `RestartPregame` can generate a genuinely new hint,
+/// not just resend the same one.
+fn generate_free_hint_fragments(grid_id: &str) -> Option<Vec<String>> {
+    let grid = crate::grid::load_grid(grid_id).ok()?;
     let (grid_rows, grid_cols) = grid_dimensions(&grid);
-    let Some((pos, object)) = pick_random_grid_position(&grid) else {
-        return Ok(());
-    };
+    let (pos, object) = pick_random_grid_position(&grid)?;
 
     let quadrant = crate::hints::quadrant_for_position(&pos, grid_rows, grid_cols);
-    let object_riddle =
-        crate::content_pools::load_object_riddle("data/object_riddles.json", &object)
-            .unwrap_or_else(|| format!("I am a {object}."));
+    let object_riddle = crate::content_pools::load_object_riddle("data/object_riddles.json", &object)
+        .unwrap_or_else(|| format!("I am a {object}."));
     let quadrant_riddle =
         crate::content_pools::load_quadrant_riddle("data/quadrant_riddles.json", quadrant)
             .unwrap_or_default();
     let combined = format!("{object_riddle} {quadrant_riddle}");
-    let fragments = crate::hints::split_into_fragments(&combined);
+    Some(crate::hints::split_into_fragments(&combined))
+}
+
+/// Sends every fragment to both teams -- best-effort, a failed free-hint
+/// delivery should never block or fail the match itself.
+fn send_free_hint_fragments(
+    ctx: &AssignContext,
+    team_a_id: &str,
+    team_b_id: &str,
+    fragments: &[String],
+) -> Result<()> {
     let total = fragments.len() as u32;
-
-    let deadline = unix_ms_after(crate::config::get().free_hint_secs);
-    set_arena_pregame(
-        &ctx.master_state,
-        arena,
-        Some(Box::new(PregameState::FreeHints {
-            team_a: matchup.team_a.clone(),
-            team_b: matchup.team_b.clone(),
-            deadline_unix_ms: deadline,
-        })),
-    );
-
     for (idx, fragment) in fragments.iter().enumerate() {
         let qr_png_base64 = crate::hints::render_qr_png_base64(fragment);
         let msg = RefereeMessage::FreeHintFragment {
@@ -1433,17 +1567,85 @@ fn send_free_hint(
         ctx.client.send(team_a_id, &payload).ok();
         ctx.client.send(team_b_id, &payload).ok();
     }
+    Ok(())
+}
+
+/// Bundles `send_free_hint`'s match-identity parameters -- stays within
+/// clippy's 7-argument limit once `admin_rx` support was added.
+struct FreeHintContext<'a> {
+    arena_id: &'a str,
+    arena: u32,
+    matchup: &'a Matchup,
+    grid_id: &'a str,
+    team_a_id: &'a str,
+    team_b_id: &'a str,
+}
+
+/// Generates and sends the shared, non-competitive free hint and shows its
+/// own countdown on the scoreboard, right after the pre-game riddle stage
+/// and before the match actually starts. Polls for operator resend/restart
+/// requests for the full window instead of a single blocking sleep, same
+/// pattern as `prompt_and_assign`'s puzzle-race wait.
+fn send_free_hint(
+    ctx: &AssignContext,
+    info: FreeHintContext,
+    admin_rx: &mut tokio::sync::mpsc::Receiver<AdminCommand>,
+) -> Result<()> {
+    let FreeHintContext {
+        arena_id,
+        arena,
+        matchup,
+        grid_id,
+        team_a_id,
+        team_b_id,
+    } = info;
+
+    let Some(mut fragments) = generate_free_hint_fragments(grid_id) else {
+        return Ok(());
+    };
+    let mut deadline = unix_ms_after(crate::config::get().free_hint_secs);
+    set_arena_pregame(
+        &ctx.master_state,
+        arena,
+        Some(Box::new(PregameState::FreeHints {
+            team_a: matchup.team_a.clone(),
+            team_b: matchup.team_b.clone(),
+            deadline_unix_ms: deadline,
+        })),
+    );
+    send_free_hint_fragments(ctx, team_a_id, team_b_id, &fragments)?;
 
     // Actually hold this stage open for the full window, matching what the
     // scoreboard countdown already implies -- sending the fragments is
-    // near-instant, so without this wait the "free hints" panel flashed by
-    // faster than anyone could read it.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock is before the Unix epoch")
-        .as_millis() as u64;
-    if deadline > now {
-        sleep(Duration::from_millis(deadline - now));
+    // near-instant, so without polling here the "free hints" panel flashed
+    // by faster than anyone could read it.
+    loop {
+        if current_unix_ms() >= deadline {
+            break;
+        }
+        match poll_pregame_admin_commands(ctx, arena_id, admin_rx) {
+            PregameSignal::None => {}
+            PregameSignal::Resend => {
+                send_free_hint_fragments(ctx, team_a_id, team_b_id, &fragments)?;
+            }
+            PregameSignal::Restart => {
+                if let Some(fresh_fragments) = generate_free_hint_fragments(grid_id) {
+                    fragments = fresh_fragments;
+                }
+                deadline = unix_ms_after(crate::config::get().free_hint_secs);
+                set_arena_pregame(
+                    &ctx.master_state,
+                    arena,
+                    Some(Box::new(PregameState::FreeHints {
+                        team_a: matchup.team_a.clone(),
+                        team_b: matchup.team_b.clone(),
+                        deadline_unix_ms: deadline,
+                    })),
+                );
+                send_free_hint_fragments(ctx, team_a_id, team_b_id, &fragments)?;
+            }
+        }
+        sleep(POLL_INTERVAL);
     }
 
     clear_arena_for_new_match(&ctx.master_state, arena);
@@ -1459,6 +1661,40 @@ struct MatchAssignment<'a> {
     grid_id: &'a str,
 }
 
+/// Picks a riddle not yet used this tournament -- pulled out of
+/// `prompt_and_assign` so `RestartPregame` can pick a genuinely fresh one
+/// too, not just resend the same text.
+fn pick_and_track_riddle(ctx: &AssignContext) -> String {
+    let riddle_pool =
+        crate::content_pools::load_pregame_riddles("data/pregame_riddles.json").unwrap_or_default();
+    ctx.tournament
+        .lock()
+        .expect("tournament lock poisoned")
+        .pick_pregame_riddle(&riddle_pool)
+        .map(|r| r.riddle)
+        .unwrap_or_else(|| "(no riddle available)".to_string())
+}
+
+/// Sends `riddle` to both teams' currently-known MACs. Best-effort: only
+/// reaches a team's board if they've already called `join_competition`
+/// (their MAC is known via the join registry). A team relying on the
+/// manual MAC-entry fallback won't receive this over the wire -- the
+/// human referee is still the fallback delivery path for them. A team
+/// that joins *after* this runs is covered separately, by
+/// `join_listener.rs`'s own late-join resend -- not by retrying this.
+fn send_riddle_to_known_teams(ctx: &AssignContext, matchup: &Matchup, riddle: &str) -> Result<()> {
+    let known_macs = ctx.join_registry.snapshot();
+    let payload = serde_json::to_string(&RefereeMessage::PregameRiddle {
+        riddle: riddle.to_string(),
+    })?;
+    for team in [&matchup.team_a, &matchup.team_b] {
+        if let Some(info) = known_macs.get(team) {
+            ctx.client.send(&info.mac, &payload).ok();
+        }
+    }
+    Ok(())
+}
+
 fn prompt_and_assign(
     ctx: &AssignContext,
     board_ids: &mut std::collections::HashMap<String, String>,
@@ -1466,6 +1702,7 @@ fn prompt_and_assign(
     arena: u32,
     assignment: MatchAssignment,
     match_start_rx: &mut tokio::sync::mpsc::Receiver<MatchStartInput>,
+    admin_rx: &mut tokio::sync::mpsc::Receiver<AdminCommand>,
 ) -> Result<()> {
     let MatchAssignment {
         pool,
@@ -1478,36 +1715,8 @@ fn prompt_and_assign(
     );
     println!("Waiting for operator to record the puzzle-race winner and board MACs via the web console...");
 
-    let riddle_pool =
-        crate::content_pools::load_pregame_riddles("data/pregame_riddles.json").unwrap_or_default();
-    let riddle = ctx
-        .tournament
-        .lock()
-        .expect("tournament lock poisoned")
-        .pick_pregame_riddle(&riddle_pool)
-        .map(|r| r.riddle)
-        .unwrap_or_else(|| "(no riddle available)".to_string());
-
-    // Best-effort: only reaches a team's board if they've already called
-    // join_competition (their MAC is known via the join registry before
-    // the operator has entered anything). A team relying on the manual
-    // MAC-entry fallback won't receive this over the wire -- the human
-    // referee is still the fallback delivery path for them, same as the
-    // rest of this pre-game ceremony already assumes.
-    let known_macs = ctx.join_registry.snapshot();
-    for team in [&matchup.team_a, &matchup.team_b] {
-        if let Some(info) = known_macs.get(team) {
-            ctx.client
-                .send(
-                    &info.mac,
-                    &serde_json::to_string(&RefereeMessage::PregameRiddle {
-                        riddle: riddle.clone(),
-                    })?,
-                )
-                .ok();
-        }
-    }
-
+    let mut riddle = pick_and_track_riddle(ctx);
+    send_riddle_to_known_teams(ctx, matchup, &riddle)?;
     set_arena_pregame(
         &ctx.master_state,
         arena,
@@ -1515,13 +1724,43 @@ fn prompt_and_assign(
             team_a: matchup.team_a.clone(),
             team_b: matchup.team_b.clone(),
             deadline_unix_ms: unix_ms_after(crate::config::get().puzzle_race_secs),
-            riddle,
+            riddle: riddle.clone(),
         })),
     );
 
-    let input = match_start_rx
-        .blocking_recv()
-        .context("match-start channel closed unexpectedly")?;
+    // Polls instead of a single `blocking_recv()` so operator resend/restart
+    // requests (see `poll_pregame_admin_commands`) can be noticed while
+    // still waiting for the puzzle-race winner to be submitted.
+    let input = loop {
+        match match_start_rx.try_recv() {
+            Ok(input) => break input,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                anyhow::bail!("match-start channel closed unexpectedly")
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
+        }
+        match poll_pregame_admin_commands(ctx, arena_id, admin_rx) {
+            PregameSignal::None => {}
+            PregameSignal::Resend => {
+                send_riddle_to_known_teams(ctx, matchup, &riddle)?;
+            }
+            PregameSignal::Restart => {
+                riddle = pick_and_track_riddle(ctx);
+                send_riddle_to_known_teams(ctx, matchup, &riddle)?;
+                set_arena_pregame(
+                    &ctx.master_state,
+                    arena,
+                    Some(Box::new(PregameState::PuzzleRace {
+                        team_a: matchup.team_a.clone(),
+                        team_b: matchup.team_b.clone(),
+                        deadline_unix_ms: unix_ms_after(crate::config::get().puzzle_race_secs),
+                        riddle: riddle.clone(),
+                    })),
+                );
+            }
+        }
+        sleep(POLL_INTERVAL);
+    };
 
     set_arena_pregame(&ctx.master_state, arena, None);
 
@@ -1534,7 +1773,18 @@ fn prompt_and_assign(
     board_ids.insert(matchup.team_a.clone(), team_a_id.clone());
     board_ids.insert(matchup.team_b.clone(), team_b_id.clone());
 
-    send_free_hint(ctx, arena, matchup, grid_id, &team_a_id, &team_b_id)?;
+    send_free_hint(
+        ctx,
+        FreeHintContext {
+            arena_id,
+            arena,
+            matchup,
+            grid_id,
+            team_a_id: &team_a_id,
+            team_b_id: &team_b_id,
+        },
+        admin_rx,
+    )?;
 
     let msg = MasterToArena::AssignMatch {
         arena,
@@ -1714,6 +1964,7 @@ mod master_state_tests {
             match_started_at_unix_ms: 1_800_000_000_000,
             is_paused: false,
             flip_pending_positions: None,
+            genesis_stream_url: None,
         }
     }
 
@@ -1879,6 +2130,7 @@ mod registration_tests {
             &crate::team_secrets::TeamSecrets::new(),
             save_path.to_str().unwrap(),
             &["example_grid.json".to_string()],
+            None,
         )
         .unwrap();
 
@@ -1938,6 +2190,7 @@ mod registration_tests {
             &crate::team_secrets::TeamSecrets::new(),
             save_path.to_str().unwrap(),
             &["example_grid.json".to_string()],
+            None,
         )
         .unwrap();
 
@@ -1980,6 +2233,7 @@ mod registration_tests {
             &crate::team_secrets::TeamSecrets::new(),
             save_path.to_str().unwrap(),
             &["example_grid.json".to_string()],
+            None,
         )
         .unwrap();
 
@@ -2012,6 +2266,73 @@ mod registration_tests {
         let loaded = load_saved_tournament_state(save_path.to_str().unwrap()).unwrap();
         assert!(loaded.is_some());
         assert_eq!(loaded.unwrap().pool1_teams[0].name, "alpha");
+    }
+
+    #[test]
+    fn run_registration_phase_restores_already_registered_teams_from_a_partial_save() {
+        let master_state = MasterState::new(ScoreboardState::Registration {
+            pool1: PoolRegistration {
+                teams: vec![],
+                schedule: vec![],
+            },
+            pool2: PoolRegistration {
+                teams: vec![],
+                schedule: vec![],
+            },
+        });
+        let team_secrets = crate::team_secrets::TeamSecrets::new();
+        // One team per pool -- a pool needs at least one team for
+        // `Tournament::next_action` to be callable at all (unrelated to
+        // what this test actually checks: that the seed's secret survives).
+        let seed = SavedTournamentState {
+            pool1_teams: vec![RegisteredTeam {
+                name: "alpha".to_string(),
+                students: vec![],
+                secret: "already-issued-secret".to_string(),
+            }],
+            pool2_teams: vec![RegisteredTeam {
+                name: "beta".to_string(),
+                students: vec![],
+                secret: "beta-secret".to_string(),
+            }],
+            registration_closed: false,
+            pool1_schedule: None,
+            pool2_schedule: None,
+        };
+
+        // No new registrations at all -- close immediately, to isolate
+        // what the seed alone restores.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<RegistrationAction>(8);
+        tx.blocking_send(RegistrationAction::CloseRegistration)
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let save_path = dir.path().join("tournament_state.json");
+        let (mut tournament, _board_ids, _grid_id) = run_registration_phase(
+            &master_state,
+            &mut rx,
+            &team_secrets,
+            save_path.to_str().unwrap(),
+            &["example_grid.json".to_string()],
+            Some(seed),
+        )
+        .unwrap();
+
+        // The restored teams' original secrets must still verify -- fresh
+        // random ones here would silently invalidate whatever those
+        // teams' boards already have typed in.
+        assert!(team_secrets.verify("alpha", "already-issued-secret"));
+        assert!(team_secrets.verify("beta", "beta-secret"));
+        // Exactly one team per pool triggers the two-team dry run
+        // (straight to a single Grand-Final-style match) -- confirming
+        // both restored teams actually made it into the tournament.
+        match tournament.next_action(1) {
+            NextAction::AssignGrandFinal { matchup, .. } => {
+                assert_eq!(matchup.team_a, "alpha");
+                assert_eq!(matchup.team_b, "beta");
+            }
+            other => panic!("expected AssignGrandFinal, got {other:?}"),
+        }
     }
 
     #[test]

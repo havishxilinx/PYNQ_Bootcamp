@@ -275,7 +275,7 @@ This is the "who does what" map for teams building a GridMind player.
 | Turn/timeout enforcement | 120-second turn window; if you do nothing, the referee ends your turn for you (and scores that decision by how much of the window you used) |
 | Tournament orchestration | Pools, round-robin, Grand Final, advancing winners — you just keep responding to `game_start`/`game_over` on the same connection |
 | `join_competition` (optional) | Self-reports your MAC to the operator so they don't have to type it in by hand |
-| A working reference client | `PYNQ_302-Referee_Match_Client.ipynb` is a genuinely working GridMind player, not a stub — fair game to read as a reference for wire-protocol usage, whether your team builds on it directly or reimplements from spec |
+| A working reference client | `PYNQ_302-Referee_Match_Client.ipynb` is a genuinely working GridMind player, not a stub — fair game to read as a reference for wire-protocol usage, whether your team builds on it directly or reimplements from spec. Eight fixed-approach, fixed-color variants also exist (`PYNQ_302-<approach>-<Red\|Blue>.ipynb`, one per detection approach x team color) — same logic, no approach-switching dropdown, and a fixed stage tracker (Join → Riddle → Free Hint → Play/Wait sub-stages) instead of free-form status text, for a simpler widget GUI during a live demo |
 
 ### What your team has to build
 

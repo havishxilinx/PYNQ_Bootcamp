@@ -75,6 +75,15 @@ Genesis server. Genesis is purely cosmetic: teams' boards each join its
 competition scene and get real per-flip arm animation, but a Genesis
 outage or misconfiguration never affects the real match or score.
 
+If that Genesis server also runs its separate live-viewer/stream process
+on a non-default port, add `--genesis-stream-port <port>` (defaults to
+Genesis's own default, `8080`) — the arena UI (`/arena?arena=N`) then
+embeds a live video feed of the match automatically. This requires a
+Genesis server running the competition-mode streaming fix (registers its
+simulation under a fixed `"competition"` key); against an unpatched
+Genesis server the video feed silently doesn't appear, nothing else is
+affected.
+
 Each arena is silent until a match is actually assigned to it — that's normal,
 not a hang. Arenas run independently (each has its own assignment thread), so
 one arena's popup sitting open doesn't freeze the other.
