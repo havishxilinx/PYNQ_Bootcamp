@@ -9,6 +9,11 @@
 # Skip this script entirely on a machine that only runs the broker's
 # server.py is not needed there -- and skip the pip install if this
 # machine will only run `gridmind-referee arena`/`master` (no broker).
+#
+# Genesis (genesis/) is NOT set up by this script -- it's optional per
+# arena machine, and its dependencies (torch, genesis-world) need a
+# GPU-backend decision (cpu/amdgpu/cuda) this script can't make for you.
+# See genesis/QUICKSTART.md.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -25,3 +30,4 @@ fi
 
 echo
 echo "Setup complete. See operators-guide.md for how to start the broker/Master/Arenas."
+echo "If this arena machine also runs Genesis, see genesis/QUICKSTART.md to set it up."

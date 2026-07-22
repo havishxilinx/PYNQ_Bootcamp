@@ -67,9 +67,9 @@ Open on this machine (and share the IP with the projector / operator laptop):
 
 Get Machine 2's own LAN IP first (`ip -4 addr show`, call it `<machine-2-ip>`) — this matters, see the warning below.
 
-**Start Genesis 1:**
+**Start Genesis 1** (bundled in the package at `server/genesis/` — copy the whole `server/` folder to this machine same as any other server-role machine):
 ```bash
-cd genesis/server   # wherever Genesis is checked out on this machine
+cd server/genesis
 python3 -m venv venv && source venv/bin/activate && pip install -e .
 export GENESIS_PORT=9002
 export GENESIS_STREAM_PORT=8080

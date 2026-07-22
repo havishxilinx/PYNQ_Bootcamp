@@ -24,6 +24,11 @@
   in a real hardware notebook missing its QR decoder). No functional loss:
   the hint was never meant to be a vision challenge, only the paid hint's
   row/col digit images are.
+- **The Genesis simulated-arm server source is now bundled** at
+  `server/genesis/` (previously "not part of this package" — you had to
+  get it separately). Its own Python dependencies still need a manual,
+  machine-specific install (GPU backend choice), see
+  `server/genesis/QUICKSTART.md`.
 - Everything else (comms resilience, deterministic/persisted team
   secrets, Resend/Restart controls, the 8 fixed-approach notebooks) is
   unchanged from v3.
@@ -101,6 +106,7 @@ Configuration cell, and run it top to bottom. Full rules and wire protocol:
 | `gridmind-referee` | Prebuilt binary (Master + Arena + web UI). Debug build, stripped — the release build hits an unrelated toolchain bug on this machine (a `ring`/rustls C-compiler assembler mismatch); the referee does no heavy compute itself, so this costs nothing at runtime. |
 | `data/` | Grid pool, riddle banks, MNIST digit assets, `game_config.json` — read at runtime relative to wherever you run the binary from. **Run the binary from inside `server/`,** or these won't be found. |
 | `broker/` | The p2p message broker (`server.py`) every board/Master/Arena talks through. |
+| `genesis/` | The Genesis simulated-arm server source (a separately-owned codebase, included here so a full server-role machine is self-contained). Optional and cosmetic — only needed on an arena machine that wants the simulated-arm visual; the referee runs identically without it. Has its own setup, see `genesis/QUICKSTART.md`. |
 | `example_grid.json`, `example_pools_config.json`, `kv260_test_*.json` | Fixture files for `--config` mode / local testing. |
 | `operators-guide.md` | The general reference — every feature, timing/scoring rules, troubleshooting table. |
 | `6-board-3-machine-tournament-guide.md` | **Start here for a real event**: exact steps for 6 teams across 3 machines, a 10-grid pool, and a full single-match walkthrough with who does what. |
@@ -140,10 +146,12 @@ from source.
   (`aruco-reference.html`, in `bootcamp_sessions/PYNQ 301 - Memory Game
   Grid Detection/` in the main repo) — these are standard bootcamp
   training-image content already on the boards, not part of this package.
-- **The Genesis simulated-arm server itself** (not `pynqsim`, the client
-  library, which *is* included) — a separate, GPU-backed service with its
-  own heavy setup (ROCm/ CUDA). Entirely optional and cosmetic; the
-  referee runs identically without it. Not part of this package.
+- **Genesis's own Python dependencies** (`genesis-world`, `torch`, and a
+  GPU-backend choice — `cpu`/`amdgpu`/`cuda`) — the *source* is included
+  (`server/genesis/`), but these aren't vendored, since the right `torch`
+  build depends on that specific machine's GPU/ROCm/CUDA setup. See
+  `server/genesis/QUICKSTART.md`. Entirely optional and cosmetic either
+  way; the referee runs identically without Genesis at all.
 
 ## Deliberately NOT included: `mnist_digits_0-9/` on the client
 
