@@ -12,6 +12,7 @@ pub mod master_messages;
 pub mod messages;
 pub mod p2p_client;
 pub mod pool;
+pub mod puzzle_answers;
 pub mod scoreboard_state;
 pub mod team_secrets;
 pub mod web;

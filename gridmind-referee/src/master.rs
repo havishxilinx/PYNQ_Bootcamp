@@ -609,6 +609,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(400);
 pub struct AuthState {
     pub team_secrets: crate::team_secrets::TeamSecrets,
     pub join_registry: crate::join_registry::JoinRegistry,
+    pub puzzle_answers: crate::puzzle_answers::PuzzleAnswers,
     /// Ignore any existing `data/tournament_state.json` for this run
     /// (without deleting it) -- for a deliberate fresh start, e.g. a test
     /// run before the real event.
@@ -627,6 +628,7 @@ pub fn run_master(
     let AuthState {
         team_secrets,
         join_registry,
+        puzzle_answers,
         fresh,
     } = auth;
     const SAVE_PATH: &str = "data/tournament_state.json";
@@ -765,6 +767,7 @@ pub fn run_master(
             master_state: master_state.clone(),
             tournament: std::sync::Arc::clone(&tournament),
             join_registry: join_registry.clone(),
+            puzzle_answers: puzzle_answers.clone(),
         };
         std::thread::spawn(move || {
             if let Err(err) = run_arena_assignment_loop(
@@ -1301,6 +1304,7 @@ struct AssignContext {
     master_state: MasterState,
     tournament: std::sync::Arc<std::sync::Mutex<Tournament>>,
     join_registry: crate::join_registry::JoinRegistry,
+    puzzle_answers: crate::puzzle_answers::PuzzleAnswers,
 }
 
 /// One arena's independent assignment loop: repeatedly asks the shared
@@ -1713,16 +1717,24 @@ struct MatchAssignment<'a> {
 
 /// Picks a riddle not yet used this tournament -- pulled out of
 /// `prompt_and_assign` so `RestartPregame` can pick a genuinely fresh one
-/// too, not just resend the same text.
-fn pick_and_track_riddle(ctx: &AssignContext) -> String {
+/// too, not just resend the same text. Returns `(riddle, answer)`; the
+/// answer is never sent to students, only recorded via `PuzzleAnswers` for
+/// the operator console to look up on demand (see `admin_puzzle_answer`).
+fn pick_and_track_riddle(ctx: &AssignContext, arena: u32) -> String {
     let riddle_pool =
         crate::content_pools::load_pregame_riddles("data/pregame_riddles.json").unwrap_or_default();
-    ctx.tournament
+    let picked = ctx
+        .tournament
         .lock()
         .expect("tournament lock poisoned")
-        .pick_pregame_riddle(&riddle_pool)
-        .map(|r| r.riddle)
-        .unwrap_or_else(|| "(no riddle available)".to_string())
+        .pick_pregame_riddle(&riddle_pool);
+    match picked {
+        Some(r) => {
+            ctx.puzzle_answers.set(arena, &r.answer);
+            r.riddle
+        }
+        None => "(no riddle available)".to_string(),
+    }
 }
 
 /// Sends `riddle` to both teams' currently-known MACs. Best-effort: only
@@ -1832,7 +1844,7 @@ fn prompt_and_assign(
     }
     println!("Operator started pre-game. Sending riddle...");
 
-    let mut riddle = pick_and_track_riddle(ctx);
+    let mut riddle = pick_and_track_riddle(ctx, arena);
     send_riddle_to_known_teams(ctx, matchup, &riddle)?;
     set_arena_pregame(
         &ctx.master_state,
@@ -1862,7 +1874,7 @@ fn prompt_and_assign(
                 send_riddle_to_known_teams(ctx, matchup, &riddle)?;
             }
             PregameSignal::Restart => {
-                riddle = pick_and_track_riddle(ctx);
+                riddle = pick_and_track_riddle(ctx, arena);
                 send_riddle_to_known_teams(ctx, matchup, &riddle)?;
                 set_arena_pregame(
                     &ctx.master_state,
@@ -2781,6 +2793,7 @@ mod tests {
                 "example_grid.json",
             ))),
             join_registry: join_registry.clone(),
+            puzzle_answers: crate::puzzle_answers::PuzzleAnswers::new(),
         };
         let matchup = Matchup {
             team_a: "alpha".to_string(),

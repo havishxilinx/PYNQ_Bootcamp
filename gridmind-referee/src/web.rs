@@ -1,8 +1,9 @@
 use crate::join_registry::JoinRegistry;
 use crate::master::{MasterState, OperatorChannels};
+use crate::puzzle_answers::PuzzleAnswers;
 use crate::scoreboard_state::ScoreboardState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
@@ -20,6 +21,7 @@ pub struct AppState {
     pub master_state: MasterState,
     pub operator_channels: OperatorChannels,
     pub join_registry: JoinRegistry,
+    pub puzzle_answers: PuzzleAnswers,
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -36,6 +38,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/move-team", post(move_team))
         .route("/api/close-registration", post(close_registration))
         .route("/api/join-status", get(join_status))
+        .route("/api/admin/puzzle-answer", get(admin_puzzle_answer))
         .route("/api/manual-join", post(manual_join))
         .route("/api/admin/set-score", post(admin_set_score))
         .route("/api/admin/pause", post(admin_pause))
@@ -239,6 +242,25 @@ async fn join_status(State(state): State<AppState>) -> impl IntoResponse {
         })
         .collect();
     Json(response)
+}
+
+#[derive(Serialize)]
+struct PuzzleAnswerResponse {
+    answer: Option<String>,
+}
+
+/// Operator-only lookup of the current puzzle race's real answer --
+/// deliberately NOT part of the `/ws` broadcast (see `PuzzleAnswers`'s doc
+/// comment for why: that goes to the public scoreboard/arena pages too,
+/// which students can see). `answer` is `null` if this arena has no
+/// riddle recorded (e.g. nobody has started pregame for it yet).
+async fn admin_puzzle_answer(
+    State(state): State<AppState>,
+    Query(query): Query<AdminArenaRequest>,
+) -> impl IntoResponse {
+    Json(PuzzleAnswerResponse {
+        answer: state.puzzle_answers.get(query.arena),
+    })
 }
 
 #[derive(Deserialize)]
@@ -511,6 +533,7 @@ mod tests {
                 master_state,
                 operator_channels,
                 join_registry: crate::join_registry::JoinRegistry::new(),
+                puzzle_answers: crate::puzzle_answers::PuzzleAnswers::new(),
             },
             rx,
         )
@@ -885,6 +908,39 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/api/join-status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn puzzle_answer_route_returns_ok_with_no_answer_recorded() {
+        let (state, _rx) = test_app_state();
+        let app = build_router(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/admin/puzzle-answer?arena=1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn puzzle_answer_route_returns_ok_with_a_recorded_answer() {
+        let (state, _rx) = test_app_state();
+        state.puzzle_answers.set(1, "honey");
+        let app = build_router(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/admin/puzzle-answer?arena=1")
                     .body(Body::empty())
                     .unwrap(),
             )

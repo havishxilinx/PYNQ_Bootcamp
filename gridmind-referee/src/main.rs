@@ -101,11 +101,13 @@ fn main() -> Result<()> {
             let (operator_channels, rx) = gridmind_referee::master::operator_channels();
             let join_registry = gridmind_referee::join_registry::JoinRegistry::new();
             let team_secrets = gridmind_referee::team_secrets::TeamSecrets::new();
+            let puzzle_answers = gridmind_referee::puzzle_answers::PuzzleAnswers::new();
 
             let app_state = gridmind_referee::web::AppState {
                 master_state: master_state.clone(),
                 operator_channels,
                 join_registry: join_registry.clone(),
+                puzzle_answers: puzzle_answers.clone(),
             };
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new()
@@ -146,6 +148,7 @@ fn main() -> Result<()> {
                 gridmind_referee::master::AuthState {
                     team_secrets,
                     join_registry,
+                    puzzle_answers,
                     fresh,
                 },
             )

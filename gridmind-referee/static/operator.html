@@ -483,20 +483,42 @@ function renderPregamePanel(arenaNum, pregame) {
     return;
   }
 
-  const stageLabel = pregame.stage === 'puzzle_race' ? 'Puzzle Race' : 'Free Hint';
-  const riddleLine = pregame.stage === 'puzzle_race'
+  const isPuzzleRace = pregame.stage === 'puzzle_race';
+  const stageLabel = isPuzzleRace ? 'Puzzle Race' : 'Free Hint';
+  const riddleLine = isPuzzleRace
     ? `<div>Riddle: <em>${pregame.riddle}</em></div>`
     : '<div>Free hint fragments already sent as plain text.</div>';
   const secondsLeft = Math.max(0, Math.round((pregame.deadline_unix_ms - Date.now()) / 1000));
+  // Never pushed over the shared websocket (see PuzzleAnswers' doc comment
+  // in puzzle_answers.rs) -- fetched on demand, operator-only, only while
+  // the puzzle race for this arena is actually active.
+  const revealButton = isPuzzleRace
+    ? `<button onclick="revealPuzzleAnswer(${arenaNum})">Reveal Answer</button>`
+    : '';
 
   container.innerHTML = `
     <div>${pregame.team_a} vs ${pregame.team_b} -- ${stageLabel} (${secondsLeft}s left)</div>
     ${riddleLine}
+    <div id="puzzle-answer-${arenaNum}"></div>
     <div class="admin-actions">
+      ${revealButton}
       <button onclick="resendPregame(${arenaNum})">Resend</button>
       <button class="danger" onclick="restartPregame(${arenaNum})">Restart</button>
     </div>
   `;
+}
+
+async function revealPuzzleAnswer(arenaNum) {
+  const response = await fetch(`/api/admin/puzzle-answer?arena=${arenaNum}`);
+  const target = document.getElementById(`puzzle-answer-${arenaNum}`);
+  if (!response.ok) {
+    target.textContent = 'Could not fetch the answer.';
+    return;
+  }
+  const body = await response.json();
+  target.innerHTML = body.answer
+    ? `<strong>Answer: ${body.answer}</strong>`
+    : '<em>No answer on record for this arena yet.</em>';
 }
 
 // ── Practice Mode ────────────────────────────────────────────────────────────
