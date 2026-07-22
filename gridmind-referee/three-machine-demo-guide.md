@@ -76,7 +76,7 @@ event day.** Once you have it:
 
 ```bash
 cd <path-to-broker>
-python3 server.py --host 0.0.0.0 --port 35050 --key demokey
+venv/bin/python server.py --host 0.0.0.0 --port 35050 --key demokey
 ```
 
 ### 6. Start the Master (on your machine, separate terminal)
