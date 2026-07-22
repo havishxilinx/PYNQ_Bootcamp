@@ -141,29 +141,17 @@ pub fn quadrant_for_position(pos: &str, rows: u32, cols: u32) -> &'static str {
     }
 }
 
-/// Splits riddle text into small multi-word fragments, one QR code each.
-/// Two words per fragment keeps each QR small and quick to scan.
+/// Splits riddle text into small multi-word fragments, delivered to
+/// students as separate `free_hint_fragment` messages (two words per
+/// fragment) rather than one big message -- purely a pacing/assembly
+/// exercise at this point (previously each fragment was also QR-encoded
+/// for a team to scan/decode; simplified to plain text).
 pub fn split_into_fragments(text: &str) -> Vec<String> {
     text.split_whitespace()
         .collect::<Vec<_>>()
         .chunks(2)
         .map(|chunk| chunk.join(" "))
         .collect()
-}
-
-pub fn render_qr_png_base64(text: &str) -> String {
-    use base64::Engine;
-
-    let code =
-        qrcode::QrCode::new(text.as_bytes()).expect("short riddle fragment fits in a QR code");
-    let img = code.render::<image::Luma<u8>>().build();
-    let mut bytes: Vec<u8> = Vec::new();
-    img.write_to(
-        &mut std::io::Cursor::new(&mut bytes),
-        image::ImageFormat::Png,
-    )
-    .expect("encoding a fixed-size in-memory PNG cannot fail");
-    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 #[cfg(test)]
@@ -245,13 +233,5 @@ mod tests {
     fn splits_riddle_text_into_word_fragments() {
         let fragments = split_into_fragments("I bark and fetch");
         assert_eq!(fragments, vec!["I bark", "and fetch"]);
-    }
-
-    #[test]
-    fn renders_qr_fragment_as_valid_base64_png() {
-        let encoded = render_qr_png_base64("I bark");
-        let bytes =
-            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &encoded).unwrap();
-        assert_eq!(&bytes[1..4], b"PNG");
     }
 }

@@ -82,13 +82,15 @@ pub enum RefereeMessage {
     PregameRiddle { riddle: String },
     /// One fragment of the shared free hint, delivered identically to both
     /// teams. `index`/`total` let a team know how many more to expect and
-    /// in what order to assemble them -- same content whether a team reads
-    /// this or scans the matching physical QR card.
+    /// in what order to assemble them. Plain text -- previously delivered
+    /// as a QR-encoded PNG a team had to decode themselves; simplified to
+    /// a direct string since nothing about the hint actually required a
+    /// vision round-trip.
     #[serde(rename = "free_hint_fragment")]
     FreeHintFragment {
         index: u32,
         total: u32,
-        qr_png_base64: String,
+        text: String,
     },
     #[serde(rename = "your_turn")]
     YourTurn { flip_num: u32 },
@@ -270,12 +272,12 @@ mod tests {
         let msg = RefereeMessage::FreeHintFragment {
             index: 0,
             total: 3,
-            qr_png_base64: "abc123".into(),
+            text: "I bark".into(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert_eq!(
             json,
-            r#"{"type":"free_hint_fragment","index":0,"total":3,"qr_png_base64":"abc123"}"#
+            r#"{"type":"free_hint_fragment","index":0,"total":3,"text":"I bark"}"#
         );
     }
 

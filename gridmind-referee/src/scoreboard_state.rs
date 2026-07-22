@@ -97,6 +97,21 @@ pub struct TeamStanding {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "stage")]
 pub enum PregameState {
+    /// Shown from the moment a match becomes `Ready` until both teams have
+    /// self-reported their MAC (`join_competition`) or an operator has
+    /// recorded it manually (`/api/manual-join`) -- registration and the
+    /// tournament schedule are typically built long before either team is
+    /// actually present (e.g. Tuesday registration, Thursday matches), so
+    /// the puzzle-race countdown must not start until someone could
+    /// actually receive and answer it. No `deadline_unix_ms`/timer here on
+    /// purpose -- nothing is timed yet.
+    #[serde(rename = "waiting_for_teams")]
+    WaitingForTeams {
+        team_a: String,
+        team_b: String,
+        team_a_joined: bool,
+        team_b_joined: bool,
+    },
     #[serde(rename = "puzzle_race")]
     PuzzleRace {
         team_a: String,

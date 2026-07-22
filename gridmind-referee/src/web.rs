@@ -36,6 +36,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/move-team", post(move_team))
         .route("/api/close-registration", post(close_registration))
         .route("/api/join-status", get(join_status))
+        .route("/api/manual-join", post(manual_join))
         .route("/api/admin/set-score", post(admin_set_score))
         .route("/api/admin/pause", post(admin_pause))
         .route("/api/admin/resume", post(admin_resume))
@@ -236,6 +237,31 @@ async fn join_status(State(state): State<AppState>) -> impl IntoResponse {
         })
         .collect();
     Json(response)
+}
+
+#[derive(Deserialize)]
+struct ManualJoinRequest {
+    team_name: String,
+    team_mac: String,
+}
+
+/// Records a team's MAC exactly as `join_competition` would, for a team
+/// whose board can't self-report (e.g. `TEAM_SECRET` wasn't set, or their
+/// notebook cell failed) -- the operator relays the MAC out loud instead.
+/// Uses the same `JoinRegistry` a real `join_competition` writes into, so
+/// it satisfies `prompt_and_assign`'s "both teams known" gate identically;
+/// there is no separate "manual" bit tracked anywhere.
+async fn manual_join(
+    State(state): State<AppState>,
+    Json(body): Json<ManualJoinRequest>,
+) -> impl IntoResponse {
+    let team_name = body.team_name.trim();
+    let team_mac = body.team_mac.trim();
+    if team_name.is_empty() || team_mac.is_empty() {
+        return (StatusCode::BAD_REQUEST, "team_name and team_mac are required").into_response();
+    }
+    state.join_registry.record(team_name, team_mac);
+    StatusCode::OK.into_response()
 }
 
 /// Resolves an arena number to its admin-command channel, matching the
@@ -834,6 +860,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn manual_join_records_the_team_in_the_join_registry() {
+        let (state, _rx) = test_app_state();
+        let join_registry = state.join_registry.clone();
+        let app = build_router(state);
+        let response = post_json(
+            app,
+            "/api/manual-join",
+            r#"{"team_name":"alpha","team_mac":"aa:aa:aa:aa:aa:aa"}"#,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            join_registry.snapshot().get("alpha").unwrap().mac,
+            "aa:aa:aa:aa:aa:aa"
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_join_rejects_an_empty_team_name_or_mac() {
+        let (state, _rx) = test_app_state();
+        let app = build_router(state);
+        let response = post_json(
+            app,
+            "/api/manual-join",
+            r#"{"team_name":"","team_mac":"aa:aa:aa:aa:aa:aa"}"#,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     async fn post_json(app: Router, uri: &str, body: &str) -> axum::http::Response<Body> {

@@ -1557,11 +1557,10 @@ fn send_free_hint_fragments(
 ) -> Result<()> {
     let total = fragments.len() as u32;
     for (idx, fragment) in fragments.iter().enumerate() {
-        let qr_png_base64 = crate::hints::render_qr_png_base64(fragment);
         let msg = RefereeMessage::FreeHintFragment {
             index: idx as u32,
             total,
-            qr_png_base64,
+            text: fragment.clone(),
         };
         let payload = serde_json::to_string(&msg)?;
         ctx.client.send(team_a_id, &payload).ok();
@@ -1713,7 +1712,44 @@ fn prompt_and_assign(
         "\nNext match for arena {arena}: {} vs {}",
         matchup.team_a, matchup.team_b
     );
-    println!("Waiting for operator to record the puzzle-race winner and board MACs via the web console...");
+    println!("Waiting for both teams to join before starting the pre-game riddle...");
+
+    // Registration (and the whole tournament schedule) can be built long
+    // before either team is actually present for their specific match --
+    // e.g. team formation/registration on Tuesday, students spend
+    // Wednesday building their client, and the tournament itself doesn't
+    // run until Thursday afternoon. Starting the timed puzzle-race
+    // countdown the instant a match becomes `Ready` (the previous
+    // behavior) would silently burn the whole window before either team
+    // could even receive it. Wait here until both teams' MACs are known --
+    // via `join_competition` (self-reported) or an operator manually
+    // recording one via `/api/manual-join` for a team that can't -- before
+    // sending anything timed.
+    loop {
+        let known = ctx.join_registry.snapshot();
+        let team_a_joined = known.contains_key(&matchup.team_a);
+        let team_b_joined = known.contains_key(&matchup.team_b);
+        if team_a_joined && team_b_joined {
+            break;
+        }
+        set_arena_pregame(
+            &ctx.master_state,
+            arena,
+            Some(Box::new(PregameState::WaitingForTeams {
+                team_a: matchup.team_a.clone(),
+                team_b: matchup.team_b.clone(),
+                team_a_joined,
+                team_b_joined,
+            })),
+        );
+        // Only relaying admin commands here -- ResendPregame/RestartPregame
+        // are meaningless before anything's been sent, so they're silently
+        // dropped by poll_pregame_admin_commands' caller-side match below
+        // (there's nothing to resend/restart yet).
+        poll_pregame_admin_commands(ctx, arena_id, admin_rx);
+        sleep(POLL_INTERVAL);
+    }
+    println!("Both teams joined. Sending pre-game riddle...");
 
     let mut riddle = pick_and_track_riddle(ctx);
     send_riddle_to_known_teams(ctx, matchup, &riddle)?;
@@ -2607,5 +2643,115 @@ mod tests {
             tournament.pool_winners(),
             ("alpha".to_string(), "beta".to_string())
         );
+    }
+
+    #[test]
+    fn prompt_and_assign_waits_for_both_teams_to_join_before_sending_the_riddle() {
+        // Reproduces the reported incident directly: a match's tournament
+        // schedule can exist long before either team is actually present
+        // (Tuesday registration vs. Thursday matches) -- the puzzle-race
+        // riddle and its countdown must not start until both teams'
+        // MACs are known, not the instant the match becomes assignable.
+        let mut server = mockito::Server::new();
+        let _mock = server.mock("POST", "/").with_status(200).create();
+
+        let master_state = MasterState::new(ScoreboardState::LivePoolPlay {
+            arena1: None,
+            arena2: None,
+            arena1_pregame: None,
+            arena2_pregame: None,
+            pool1_standings: vec![],
+            pool2_standings: vec![],
+            pool1_schedule: vec![],
+            pool2_schedule: vec![],
+            grand_final_ready: None,
+        });
+        let join_registry = crate::join_registry::JoinRegistry::new();
+        let ctx = AssignContext {
+            client: std::sync::Arc::new(P2pClient::new(&server.host_with_port(), "key", "master")),
+            master_state: master_state.clone(),
+            tournament: std::sync::Arc::new(std::sync::Mutex::new(Tournament::new(
+                names(&["alpha"]),
+                names(&["beta"]),
+                "example_grid.json",
+            ))),
+            join_registry: join_registry.clone(),
+        };
+        let matchup = Matchup {
+            team_a: "alpha".to_string(),
+            team_b: "beta".to_string(),
+        };
+
+        let (match_start_tx, mut match_start_rx) = tokio::sync::mpsc::channel::<MatchStartInput>(8);
+        let (_admin_tx, mut admin_rx) = tokio::sync::mpsc::channel::<AdminCommand>(8);
+        let mut board_ids = std::collections::HashMap::new();
+
+        let _handle = std::thread::spawn(move || {
+            prompt_and_assign(
+                &ctx,
+                &mut board_ids,
+                "arena-1-referee",
+                1,
+                MatchAssignment {
+                    pool: 1,
+                    matchup: &matchup,
+                    grid_id: "example_grid.json",
+                },
+                &mut match_start_rx,
+                &mut admin_rx,
+            )
+        });
+
+        let wait_for = |predicate: &dyn Fn(&ScoreboardState) -> bool| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while std::time::Instant::now() < deadline {
+                if predicate(&master_state.snapshot()) {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            false
+        };
+
+        // Neither team has joined yet -- must show WaitingForTeams with
+        // both flags false, and must NOT have sent a riddle (still
+        // WaitingForTeams, not PuzzleRace).
+        assert!(wait_for(&|state| matches!(
+            state,
+            ScoreboardState::LivePoolPlay { arena1_pregame: Some(p), .. }
+                if **p == PregameState::WaitingForTeams {
+                    team_a: "alpha".to_string(),
+                    team_b: "beta".to_string(),
+                    team_a_joined: false,
+                    team_b_joined: false,
+                }
+        )));
+
+        join_registry.record("alpha", "aa:aa:aa:aa:aa:aa");
+        assert!(wait_for(&|state| matches!(
+            state,
+            ScoreboardState::LivePoolPlay { arena1_pregame: Some(p), .. }
+                if **p == PregameState::WaitingForTeams {
+                    team_a: "alpha".to_string(),
+                    team_b: "beta".to_string(),
+                    team_a_joined: true,
+                    team_b_joined: false,
+                }
+        )));
+
+        join_registry.record("beta", "bb:bb:bb:bb:bb:bb");
+        assert!(wait_for(&|state| matches!(
+            state,
+            ScoreboardState::LivePoolPlay { arena1_pregame: Some(p), .. }
+                if matches!(**p, PregameState::PuzzleRace { .. })
+        )));
+
+        // Not joining `handle` here on purpose: past this point
+        // `prompt_and_assign` moves on to `send_free_hint`, which holds
+        // its own stage open for `free_hint_secs` (60s by default) --
+        // real behavior this test isn't concerned with. Dropping
+        // `match_start_tx` unblocks it with a clean "channel closed"
+        // error on this background thread instead of a 60s test.
+        drop(match_start_tx);
     }
 }
