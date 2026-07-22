@@ -155,15 +155,20 @@ until both teams are known to have joined.**
   really stuck.
 - Click the Ready row to open the match-assign popup once both teams are
   in. MAC fields auto-fill green (or stay manually editable as a fallback).
-  Pick the puzzle-race winner, submit. This calls `/api/start-match` with
-  `{arena, winner, team_a_mac, team_b_mac}` — **arena must match which
-  arena's Ready row you clicked**; the popup handles this for you, you
-  don't type an arena number.
-- Right after you submit, both teams automatically get a shared **free
-  hint** (a real object + rough location on that match's actual grid,
-  delivered as several plain-text fragments) — another live countdown shows on
-  the scoreboard. No operator action needed for this stage; the match starts
-  automatically once it finishes.
+  Pick the puzzle-race winner, click **Confirm Winner**. This calls
+  `/api/start-match` with `{arena, winner, team_a_mac, team_b_mac}` —
+  **arena must match which arena's Ready row you clicked**; the popup
+  handles this for you, you don't type an arena number. This records the
+  winner and MACs but does **not** send the free hint yet.
+- The panel now shows "winner confirmed" with a **Start Match** button —
+  a deliberately separate action, so confirming the winner doesn't force
+  you straight into the free-hint clock. Click it whenever you're actually
+  ready to proceed.
+- Clicking Start Match sends both teams a shared **free hint** (a real
+  object + rough location on that match's actual grid, delivered as
+  several plain-text fragments) — a live countdown shows on the
+  scoreboard. No further operator action needed for this stage; the
+  match starts automatically once the free-hint window finishes.
 
 **Watch, once the match starts:**
 - **The scoreboard** — live grid, turn indicator, scores, streak, a turn timer
