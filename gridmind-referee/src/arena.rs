@@ -268,6 +268,12 @@ fn run_one_match(
                     MasterToArena::AdminPause => state.pause(Instant::now()),
                     MasterToArena::AdminResume => state.resume(Instant::now()),
                     MasterToArena::AdminStop => {
+                        let msg = ArenaToMaster::MatchVoided {
+                            arena: arena_num,
+                            pool: pool_num,
+                            practice: assignment.is_practice,
+                        };
+                        client.send(master_id, &serde_json::to_string(&msg)?)?;
                         if let Some(g) = genesis {
                             g.stop_competition(genesis_admin_password);
                         }

@@ -182,6 +182,37 @@ impl Tournament {
         }
     }
 
+    /// Call when an operator Stops a match instead of letting it finish --
+    /// reverts the Live entry back to Ready (not Complete, no winner
+    /// recorded) so `next_action` hands out the exact same matchup again
+    /// the next time this arena is free. A no-op if there's no Live entry
+    /// to revert (e.g. a stale/duplicate MatchVoided).
+    pub fn void_live_match(&mut self, pool: u32) {
+        if pool == 0 {
+            // The Grand Final matchup itself isn't retained once
+            // `next_action` transitions it to `Assigned` -- reconstruct it
+            // from pool standings, exactly as `next_action` does the first
+            // time (both pools are necessarily already complete, or the
+            // Grand Final could never have been assigned in the first
+            // place).
+            if self.grand_final == GrandFinalState::Assigned {
+                self.grand_final = GrandFinalState::Ready(Matchup {
+                    team_a: self.pool1_standings.winner(),
+                    team_b: self.pool2_standings.winner(),
+                });
+            }
+            return;
+        }
+        let schedule = match pool {
+            1 => &mut self.pool1_schedule,
+            2 => &mut self.pool2_schedule,
+            other => panic!("unknown pool id: {other}"),
+        };
+        if let Some(entry) = schedule.iter_mut().find(|e| e.status == MatchStatus::Live) {
+            entry.status = MatchStatus::Ready;
+        }
+    }
+
     /// Both pools' winners, for the Champion screen. Only meaningful once
     /// both pools are complete (true by the time a Grand Final result
     /// arrives, since the Grand Final can't be assigned any earlier).
@@ -959,6 +990,13 @@ pub fn run_master(
                                 // sets this field moments later.
                                 grand_final_ready: None,
                             });
+                            // The just-finished match's live view (scores,
+                            // grid, turn timer) would otherwise sit frozen
+                            // on screen until this arena's next pregame
+                            // ceremony starts -- clear it now so the
+                            // scoreboard/arena pages immediately reflect
+                            // that nothing is live here anymore.
+                            clear_arena_for_new_match(&master_state, arena);
                         } else {
                             let (pool1_winner, pool2_winner, third_place) = {
                                 let mut t = tournament.lock().expect("tournament lock poisoned");
@@ -973,6 +1011,59 @@ pub fn run_master(
                                 pool2_winner,
                                 third_place,
                             });
+                        }
+                    }
+                    ArenaToMaster::MatchVoided {
+                        arena,
+                        pool,
+                        practice,
+                    } => {
+                        if practice {
+                            // Practice matches were never in the schedule
+                            // to begin with -- nothing to revert.
+                            println!("[arena {arena}] practice match stopped, no result recorded");
+                            clear_arena_for_new_match(&master_state, arena);
+                        } else {
+                            println!(
+                                "[pool {pool}] match on arena {arena} stopped -- will be reassigned"
+                            );
+                            let (pool1_standings, pool2_standings, pool1_schedule, pool2_schedule) = {
+                                let mut t = tournament.lock().expect("tournament lock poisoned");
+                                t.void_live_match(pool);
+                                (
+                                    standings_snapshot(&t.pool1_standings),
+                                    standings_snapshot(&t.pool2_standings),
+                                    t.pool1_schedule().to_vec(),
+                                    t.pool2_schedule().to_vec(),
+                                )
+                            };
+                            // Push the reverted-to-Ready schedule entry
+                            // immediately, same reasoning as MatchResult
+                            // above -- don't wait for some other event to
+                            // happen to refresh it.
+                            let (arena1, arena2, arena1_pregame, arena2_pregame) =
+                                match master_state.snapshot() {
+                                    ScoreboardState::LivePoolPlay {
+                                        arena1,
+                                        arena2,
+                                        arena1_pregame,
+                                        arena2_pregame,
+                                        ..
+                                    } => (arena1, arena2, arena1_pregame, arena2_pregame),
+                                    _ => (None, None, None, None),
+                                };
+                            master_state.update(ScoreboardState::LivePoolPlay {
+                                arena1,
+                                arena2,
+                                arena1_pregame,
+                                arena2_pregame,
+                                pool1_standings,
+                                pool2_standings,
+                                pool1_schedule,
+                                pool2_schedule,
+                                grand_final_ready: None,
+                            });
+                            clear_arena_for_new_match(&master_state, arena);
                         }
                     }
                 }
@@ -2553,6 +2644,50 @@ mod tests {
                 );
             }
             other => panic!("expected AssignMatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn void_live_match_reverts_the_live_entry_to_ready_for_reassignment() {
+        let mut tournament = Tournament::new(
+            names(&["alpha", "beta"]),
+            names(&["delta", "epsilon"]),
+            "example_grid.json",
+        );
+        // Assigns the alpha-vs-beta matchup, marking it Live.
+        let first = tournament.next_action(1);
+        assert!(matches!(first, NextAction::AssignMatch { .. }));
+
+        // Operator Stops it instead of it finishing -- no record_result.
+        tournament.void_live_match(1);
+
+        // The exact same matchup is handed out again, not skipped.
+        match tournament.next_action(1) {
+            NextAction::AssignMatch { matchup, .. } => {
+                assert_eq!(
+                    matchup,
+                    Matchup {
+                        team_a: "alpha".into(),
+                        team_b: "beta".into()
+                    }
+                );
+            }
+            other => panic!("expected the same matchup reassigned, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn void_live_match_is_a_no_op_when_nothing_is_live() {
+        let mut tournament = Tournament::new(
+            names(&["alpha", "beta"]),
+            names(&["delta", "epsilon"]),
+            "example_grid.json",
+        );
+        // Nothing assigned yet -- must not panic looking for a Live entry.
+        tournament.void_live_match(1);
+        match tournament.next_action(1) {
+            NextAction::AssignMatch { .. } => {}
+            other => panic!("expected AssignMatch still available, got {other:?}"),
         }
     }
 

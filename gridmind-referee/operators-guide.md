@@ -217,6 +217,30 @@ mid-tournament, so gameplay rules can't shift mid-match. If the file is
 missing or malformed, the referee falls back to its built-in defaults (the
 values already shown throughout this guide) rather than crashing.
 
+## Live match admin overrides
+
+Available on the arena's admin panel once a match is actually live (not
+during pregame — see the pregame-specific Resend/Restart/Start Pregame/Start
+Match controls in Step 6):
+
+- **Pause / Resume** — freezes/resumes the turn timer. Pausing mid-turn does
+  not freeze the *referee's* 120s clock from the student boards' point of
+  view, only the scoreboard's own countdown display — use sparingly.
+- **Set Score** — directly overwrites one team's score to an absolute value.
+  For correcting a scoring dispute, not for normal play.
+- **Finish Now** — ends the match immediately, crediting whoever's currently
+  ahead (same tie-break as a natural finish). The tournament schedule
+  advances exactly as if the match had ended normally, and the live
+  scoreboard/arena view clears right away.
+- **Stop (void)** — halts the match with **no result recorded at all**, not
+  even "whoever was ahead." The schedule entry reverts to Ready, so the
+  exact same matchup gets handed out again the next time this arena is
+  free — click the newly-Ready row and go through registration/pregame for
+  it again from scratch, riddle and free hint included. Use this over
+  Finish when something went genuinely wrong (wrong grid loaded, wrong
+  teams assigned, a technical failure mid-match) rather than a normal
+  early end where a score should still count.
+
 ## Step 7 — Paid hints (if a team asks about them)
 
 A team can request a paid hint for an object name during their own active

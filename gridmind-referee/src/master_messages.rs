@@ -54,6 +54,19 @@ pub enum ArenaToMaster {
         #[serde(default)]
         practice: bool,
     },
+    /// Sent instead of `MatchResult` when the operator uses `AdminStop` --
+    /// no winner/scores to report, since the match was voided, not
+    /// finished. Lets the Master revert the schedule entry back to
+    /// `Ready` (see `Tournament::void_live_match`) so the exact same
+    /// matchup gets handed out again, instead of getting permanently
+    /// stuck `Live` with no result ever arriving to unblock it.
+    #[serde(rename = "match_voided")]
+    MatchVoided {
+        arena: u32,
+        pool: u32,
+        #[serde(default)]
+        practice: bool,
+    },
 }
 
 /// Messages the Master sends to an Arena Agent.
@@ -90,9 +103,10 @@ pub enum MasterToArena {
     AdminPause,
     #[serde(rename = "admin_resume")]
     AdminResume,
-    /// Halts the match immediately with no result sent to the Master --
-    /// the tournament schedule does not advance. The operator re-triggers
-    /// `start_match` for the same matchup when ready to replay.
+    /// Halts the match immediately and reports `MatchVoided` (not
+    /// `MatchResult`, no winner/scores) -- the schedule entry reverts to
+    /// `Ready` so the exact same matchup is handed out again the next
+    /// time this arena is free, rather than getting stuck `Live` forever.
     #[serde(rename = "admin_stop")]
     AdminStop,
     /// Ends the match immediately, crediting whoever's currently ahead
@@ -123,6 +137,20 @@ mod tests {
             }
             other => panic!("expected MatchResult, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn match_voided_round_trips_from_json() {
+        let json = r#"{"type":"match_voided","arena":1,"pool":1}"#;
+        let msg: ArenaToMaster = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            msg,
+            ArenaToMaster::MatchVoided {
+                arena: 1,
+                pool: 1,
+                practice: false,
+            }
+        );
     }
 
     #[test]
