@@ -4,14 +4,25 @@ Get your Genesis server running in 5 minutes.
 
 ## Prerequisites
 
-- Linux machine with **Python 3.9-3.12** -- not whatever `python3` defaults to.
-  `genesis-world`'s `taichi` dependency has no wheels yet for very new Python
-  releases (3.13+); on a machine whose default `python3` is newer than that,
-  `pip install -e .` fails with a confusing `ResolutionImpossible` error that
-  looks like a `genesis-world` version conflict but is actually "no taichi
-  wheel exists for this Python at all." Check with `python3 --version` first;
-  if it's 3.13+, install an older interpreter (e.g. `sudo apt install
-  python3.11 python3.11-venv`) and use that explicitly below.
+- Linux machine with **Python 3.9-3.12** available to the venv -- not
+  necessarily whatever `python3` defaults to. `genesis-world`'s `taichi`
+  dependency has no wheels yet for very new Python releases (3.13+); on a
+  machine whose default `python3` is newer than that, `pip install -e .`
+  fails with a confusing `ResolutionImpossible` error that looks like a
+  `genesis-world` version conflict but is actually "no taichi wheel exists
+  for this Python at all." Check with `python3 --version` first.
+  - If an older interpreter is already installed, use it directly:
+    `python3.11 -m venv venv`.
+  - **If only a newer Python (3.13+) is installed system-wide** (no
+    `apt install python3.11` available either), use `uv` instead -- it
+    fetches a self-contained Python build with no root/package-manager
+    access needed:
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    source $HOME/.local/bin/env   # or open a new shell
+    uv venv --python 3.11 venv
+    ```
+    Then use `uv pip install -e .` instead of `pip install -e .` below.
 - Network access from student machines
 - (Optional) NVIDIA or AMD GPU
 
@@ -21,12 +32,12 @@ Get your Genesis server running in 5 minutes.
 # 1. Navigate to this directory (server/genesis/ in the gridmind-package)
 cd genesis
 
-# 2. Create virtual environment -- use an explicit 3.9-3.12 interpreter,
-#    not bare `python3`, if your system default is newer (see Prerequisites)
+# 2. Create virtual environment -- use an explicit 3.9-3.12 interpreter, or
+#    `uv venv --python 3.11 venv` if none is installed system-wide (see Prerequisites)
 python3.11 -m venv venv
 source venv/bin/activate
 
-# 3. Install dependencies
+# 3. Install dependencies (use `uv pip install -e .` if you created the venv with uv)
 pip install -e .
 ```
 
@@ -128,12 +139,21 @@ pip install --upgrade genesis-world
 This isn't really a version conflict -- pip is backtracking through every
 `genesis-world` release because none of them can find a `taichi` wheel for
 your Python version. Check `python3 --version` inside the venv; if it's
-3.13+, delete the venv and recreate it with an older interpreter (3.9-3.12):
+3.13+, delete the venv and recreate it with an older interpreter:
 ```bash
 rm -rf venv
-python3.11 -m venv venv   # or whichever 3.9-3.12 interpreter you have
+python3.11 -m venv venv   # if a 3.9-3.12 interpreter is already installed
+```
+**If the machine only has Python 3.13+ installed system-wide** (e.g. no
+`apt install python3.11` available), use `uv` to fetch an isolated Python
+build instead -- no root or package-manager access needed:
+```bash
+rm -rf venv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+uv venv --python 3.11 venv
 source venv/bin/activate
-pip install -e .
+uv pip install -e .
 ```
 
 ## Next Steps
