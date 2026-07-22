@@ -102,6 +102,13 @@ pub struct GameState {
     grid: HashMap<String, String>,
     scores: HashMap<String, i32>,
     hints_used: HashMap<String, u32>,
+    /// A hint request received while `team` was NOT the active team --
+    /// held here and auto-resolved the instant their turn actually starts
+    /// (see `resolve_queued_hint`), so the request/response round trip
+    /// never eats into their own turn clock. At most one pending object
+    /// per team; a second request while still waiting overwrites the
+    /// first rather than queuing both.
+    queued_hints: HashMap<String, String>,
     pairs_matched_by_team: HashMap<String, u32>,
     matched: HashSet<String>,
     revealed: HashSet<String>,
@@ -149,6 +156,7 @@ impl GameState {
             grid,
             scores,
             hints_used,
+            queued_hints: HashMap::new(),
             pairs_matched_by_team,
             matched: HashSet::new(),
             revealed: HashSet::new(),
@@ -311,7 +319,15 @@ impl GameState {
         self.bot_turn = None;
     }
 
-    fn push_turn_signals(&self, messages: &mut Vec<(String, RefereeMessage)>) {
+    /// Announces the new active team's turn -- and, if they queued a hint
+    /// request while it wasn't their turn yet, resolves it first so the
+    /// `hint_response`/`hint_rejected` message arrives before `your_turn`,
+    /// not carved out of the turn clock that's about to start.
+    fn push_turn_signals(&mut self, messages: &mut Vec<(String, RefereeMessage)>) {
+        let active_team = self.active_team().to_string();
+        if let Some(outcome) = self.resolve_queued_hint(&active_team) {
+            messages.extend(outcome.into_messages());
+        }
         let active_id = self.active_id().to_string();
         for (_, id) in &self.teams {
             let msg = if *id == active_id {
@@ -326,7 +342,7 @@ impl GameState {
     }
 
     /// Messages to send once, right after game_start, to kick off turn 1.
-    pub fn push_initial_turn_signals(&self) -> Vec<(String, RefereeMessage)> {
+    pub fn push_initial_turn_signals(&mut self) -> Vec<(String, RefereeMessage)> {
         let mut messages = vec![];
         self.push_turn_signals(&mut messages);
         messages
@@ -721,18 +737,40 @@ impl GameState {
         }
     }
 
-    /// Handle a paid hint request from the active team for a named object.
-    /// Rejects outright (no cost) if the team's score is <= 0 or they've
+    /// Handle a paid hint request for a named object. If `team` is the
+    /// active team, resolves it immediately (against their own turn
+    /// clock). If `team` isn't active yet, the request is queued instead
+    /// of dropped -- it auto-resolves the instant their turn starts (see
+    /// `push_turn_signals`/`resolve_queued_hint`), so a team can pay for a
+    /// hint while waiting without spending their own turn clock on the
+    /// request/response round trip. Queuing itself has no immediate
+    /// response; whatever `resolve_hint` decides arrives right before
+    /// `your_turn` does.
+    pub fn receive_hint_request(&mut self, team: &str, object: &str) -> Option<HintOutcome> {
+        let active_team = self.active_team().to_string();
+        if team != active_team {
+            self.queued_hints.insert(team.to_string(), object.to_string());
+            return None;
+        }
+        self.resolve_hint(object)
+    }
+
+    /// If `team` queued a hint while it wasn't their turn, resolve it now
+    /// that their turn is starting -- a no-op if nothing was queued.
+    fn resolve_queued_hint(&mut self, team: &str) -> Option<HintOutcome> {
+        let object = self.queued_hints.remove(team)?;
+        self.resolve_hint(&object)
+    }
+
+    /// Resolves a hint request against whoever `active_team()` currently
+    /// is. Rejects outright (no cost) if their score is <= 0 or they've
     /// already used both hint slots this match. Otherwise checks whether
     /// the object is already fully resolved (both its positions revealed)
     /// — if so, rejects but still costs the point and counts against the
     /// cap. If exactly one position is revealed, hints at the other. If
     /// neither is revealed, hints at the lexicographically smaller one.
-    pub fn receive_hint_request(&mut self, team: &str, object: &str) -> Option<HintOutcome> {
+    fn resolve_hint(&mut self, object: &str) -> Option<HintOutcome> {
         let active_team = self.active_team().to_string();
-        if team != active_team {
-            return None;
-        }
 
         let score = *self.scores.get(&active_team).unwrap_or(&0);
         if score <= 0 {
@@ -1060,7 +1098,7 @@ mod tests {
 
     #[test]
     fn initial_turn_signals_send_your_turn_to_first_team_only() {
-        let state = GameState::new(two_teams(), small_grid());
+        let mut state = GameState::new(two_teams(), small_grid());
         let messages = state.push_initial_turn_signals();
         assert_eq!(messages.len(), 2);
         assert_eq!(
@@ -1351,6 +1389,72 @@ mod tests {
         let mut state = GameState::new(two_teams(), small_grid());
         let outcome = state.receive_hint_request("beta", "dog");
         assert!(outcome.is_none());
+    }
+
+    #[test]
+    fn hint_queued_while_waiting_resolves_before_your_turn_is_sent() {
+        let mut state = GameState::new(two_teams(), small_grid());
+        // alpha claims a wrong match: +2 tier - 1 penalty = 1, turn -> beta.
+        let outcome = state.receive_result("alpha", "A1", "A3", "match").unwrap();
+        assert_eq!(state.scores().get("alpha"), Some(&1));
+        assert_eq!(state.active_team(), "beta");
+        drop(outcome);
+
+        // alpha isn't active, but queues a hint for "cat" instead of being dropped.
+        let immediate = state.receive_hint_request("alpha", "cat");
+        assert!(immediate.is_none(), "queuing produces no immediate response");
+        assert_eq!(state.queued_hints.get("alpha"), Some(&"cat".to_string()));
+
+        // beta's turn now ends (wrong match) and switches back to alpha --
+        // the queued hint must resolve as part of that same message batch,
+        // before alpha's `your_turn`.
+        let messages = state
+            .receive_result("beta", "A1", "A3", "match")
+            .unwrap()
+            .into_messages();
+        assert_eq!(state.active_team(), "alpha");
+        assert!(
+            !state.queued_hints.contains_key("alpha"),
+            "resolved hint must be removed from the queue"
+        );
+
+        let hint_idx = messages
+            .iter()
+            .position(|(id, msg)| id == "id-a" && matches!(msg, RefereeMessage::HintResponse { .. }))
+            .expect("expected a HintResponse for alpha");
+        let turn_idx = messages
+            .iter()
+            .position(|(id, msg)| id == "id-a" && matches!(msg, RefereeMessage::YourTurn { .. }))
+            .expect("expected a YourTurn for alpha");
+        assert!(
+            hint_idx < turn_idx,
+            "hint must arrive before your_turn, not be carved out of the turn clock"
+        );
+
+        // cost still applies: alpha's score of 1 drops to 0.
+        assert_eq!(state.scores().get("alpha"), Some(&0));
+    }
+
+    #[test]
+    fn queued_hint_with_nonpositive_score_is_dropped_silently_at_turn_start() {
+        let mut state = GameState::new(two_teams(), small_grid());
+        // beta's score is still 0 -- queuing must not bypass the score>0 rule.
+        let immediate = state.receive_hint_request("beta", "dog");
+        assert!(immediate.is_none());
+
+        // alpha ends its turn (no claim -- genuinely no match) so beta becomes active.
+        let messages = state
+            .receive_result("alpha", "A1", "A3", "no_match")
+            .unwrap()
+            .into_messages();
+        assert_eq!(state.active_team(), "beta");
+        assert!(
+            !messages
+                .iter()
+                .any(|(_, msg)| matches!(msg, RefereeMessage::HintResponse { .. }
+                    | RefereeMessage::HintRejected { .. })),
+            "score <= 0 must silently drop the queued hint, no message at all"
+        );
     }
 
     #[test]
