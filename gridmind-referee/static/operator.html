@@ -395,6 +395,8 @@ function adminFinish(arenaNum) {
   postAdmin('finish', { arena: arenaNum });
 }
 
+function startPregame(arenaNum) { postAdmin('start-pregame', { arena: arenaNum }); }
+
 function resendPregame(arenaNum) { postAdmin('resend-pregame', { arena: arenaNum }); }
 
 function restartPregame(arenaNum) {
@@ -409,6 +411,21 @@ function restartPregame(arenaNum) {
 /// the riddle/hint -- see the incident that prompted this panel: the
 /// riddle send is otherwise a single best-effort attempt with zero
 /// operator-facing feedback either way.
+async function manualJoin(arenaNum) {
+  const teamName = document.getElementById(`manual-join-${arenaNum}-team`).value.trim();
+  const teamMac = document.getElementById(`manual-join-${arenaNum}-mac`).value.trim();
+  if (!teamName || !teamMac) {
+    alert('Enter both a team name and MAC.');
+    return;
+  }
+  const response = await fetch('/api/manual-join', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ team_name: teamName, team_mac: teamMac }),
+  });
+  await reportIfFailed(response, 'Manual Join');
+}
+
 function renderPregamePanel(arenaNum, pregame) {
   const wrap = document.getElementById(`pregame-panel-${arenaNum}-wrap`);
   const container = document.getElementById(`pregame-panel-${arenaNum}`);
@@ -418,10 +435,43 @@ function renderPregamePanel(arenaNum, pregame) {
   }
   wrap.style.display = 'block';
 
+  if (pregame.stage === 'waiting_for_teams') {
+    // Registration (and the whole tournament schedule) can exist long
+    // before either team is actually present for this specific match --
+    // e.g. team formation on Tuesday, the tournament itself on Thursday.
+    // Nothing timed starts until both rows below show a checkmark.
+    const aMark = pregame.team_a_joined ? '✅' : '⏳ not connected yet';
+    const bMark = pregame.team_b_joined ? '✅' : '⏳ not connected yet';
+    container.innerHTML = `
+      <div>Waiting for both teams to join before starting the riddle:</div>
+      <div>${pregame.team_a}: ${aMark}</div>
+      <div>${pregame.team_b}: ${bMark}</div>
+      <div class="admin-actions">
+        <input type="text" id="manual-join-${arenaNum}-team" placeholder="Team name (e.g. ${!pregame.team_a_joined ? pregame.team_a : pregame.team_b})">
+        <input type="text" id="manual-join-${arenaNum}-mac" placeholder="MAC (relayed out loud if their board can't self-report)">
+        <button onclick="manualJoin(${arenaNum})">Mark as Joined</button>
+      </div>
+    `;
+    return;
+  }
+
+  if (pregame.stage === 'ready_to_start') {
+    // Both teams joined, but the riddle is deliberately held back until the
+    // operator confirms both boards are actually ready -- it no longer
+    // fires automatically the instant both MACs are known.
+    container.innerHTML = `
+      <div>${pregame.team_a} vs ${pregame.team_b} -- both teams joined, ready to start.</div>
+      <div class="admin-actions">
+        <button onclick="startPregame(${arenaNum})">Start Pregame</button>
+      </div>
+    `;
+    return;
+  }
+
   const stageLabel = pregame.stage === 'puzzle_race' ? 'Puzzle Race' : 'Free Hint';
   const riddleLine = pregame.stage === 'puzzle_race'
     ? `<div>Riddle: <em>${pregame.riddle}</em></div>`
-    : '<div>Free hint fragments already sent as QR codes.</div>';
+    : '<div>Free hint fragments already sent as plain text.</div>';
   const secondsLeft = Math.max(0, Math.round((pregame.deadline_unix_ms - Date.now()) / 1000));
 
   container.innerHTML = `

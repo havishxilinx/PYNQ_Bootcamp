@@ -180,6 +180,25 @@ function renderStrip(arena) {
 }
 
 function renderPregameStrip(pregame) {
+  if (pregame.stage === 'waiting_for_teams') {
+    // No deadline yet -- nothing timed has started. Registration (and the
+    // whole tournament schedule) can exist long before either team is
+    // actually present for this specific match.
+    activeView = null;
+    const aMark = pregame.team_a_joined ? '✅' : '⏳';
+    const bMark = pregame.team_b_joined ? '✅' : '⏳';
+    return `<div class="puzzle-banner">⏳ Waiting for both teams to connect</div>
+      <div class="team-row"><span>${aMark} ${esc(pregame.team_a)}</span><span>vs</span><span>${bMark} ${esc(pregame.team_b)}</span></div>`;
+  }
+
+  if (pregame.stage === 'ready_to_start') {
+    // Both teams joined, but the riddle is held back until the operator
+    // explicitly starts it -- no deadline exists yet, so nothing to time.
+    activeView = null;
+    return `<div class="puzzle-banner">✅ Both teams joined -- waiting for operator to start</div>
+      <div class="team-row"><span>${esc(pregame.team_a)}</span><span>vs</span><span>${esc(pregame.team_b)}</span></div>`;
+  }
+
   const isPuzzleRace = pregame.stage === 'puzzle_race';
   activeView = 'pregame';
   pregameDeadlineMs = pregame.deadline_unix_ms;

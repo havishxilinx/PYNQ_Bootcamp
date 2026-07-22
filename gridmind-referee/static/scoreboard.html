@@ -146,6 +146,24 @@ function renderArenaPanel(arena, label, extraClass) {
 }
 
 function renderPregamePanel(pregame, label, extraClass) {
+  if (pregame.stage === 'waiting_for_teams') {
+    const aMark = pregame.team_a_joined ? '✅' : '⏳';
+    const bMark = pregame.team_b_joined ? '✅' : '⏳';
+    return `<div class="panel ${extraClass || ''}">
+      <h3>${esc(label)}</h3>
+      <div class="puzzle-banner">⏳ Waiting for both teams to connect</div>
+      <div class="team-row"><span>${aMark} ${esc(pregame.team_a)}</span><span>vs</span><span>${bMark} ${esc(pregame.team_b)}</span></div>
+    </div>`;
+  }
+
+  if (pregame.stage === 'ready_to_start') {
+    return `<div class="panel ${extraClass || ''}">
+      <h3>${esc(label)}</h3>
+      <div class="puzzle-banner">✅ Both teams joined -- waiting for operator to start</div>
+      <div class="team-row"><span>${esc(pregame.team_a)}</span><span>vs</span><span>${esc(pregame.team_b)}</span></div>
+    </div>`;
+  }
+
   const isPuzzleRace = pregame.stage === 'puzzle_race';
   const banner = isPuzzleRace ? '🧩 Puzzle Race in progress' : '🔍 Free Hint window';
   const riddleBlock = isPuzzleRace

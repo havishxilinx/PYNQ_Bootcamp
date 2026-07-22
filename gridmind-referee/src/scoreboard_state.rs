@@ -112,6 +112,14 @@ pub enum PregameState {
         team_a_joined: bool,
         team_b_joined: bool,
     },
+    /// Both teams have joined, but the puzzle-race riddle is deliberately
+    /// held back until the operator explicitly starts it -- sending it the
+    /// instant both MACs are known gave the operator no window to confirm
+    /// both boards were actually ready before the clock started. No
+    /// `deadline_unix_ms` here either, for the same reason as
+    /// `WaitingForTeams`: nothing is timed yet.
+    #[serde(rename = "ready_to_start")]
+    ReadyToStart { team_a: String, team_b: String },
     #[serde(rename = "puzzle_race")]
     PuzzleRace {
         team_a: String,

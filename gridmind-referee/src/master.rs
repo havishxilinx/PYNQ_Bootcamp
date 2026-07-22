@@ -379,6 +379,13 @@ pub enum AdminCommand {
         team_mac: String,
         grid_id: String,
     },
+    /// Explicitly starts the pre-game riddle once both teams have joined.
+    /// The riddle used to fire automatically the instant both MACs became
+    /// known, which on a real hardware run gave the operator no window to
+    /// confirm both boards were actually ready before the clock started.
+    /// Handled entirely within `prompt_and_assign`, same as
+    /// `ResendPregame`/`RestartPregame` -- never reaches the Arena process.
+    StartPregame,
     /// Resends the current pregame stage's content (the puzzle-race riddle,
     /// or the free-hint fragments) to both teams' currently-known MACs,
     /// without resetting anything -- an operator escape hatch for "a team
@@ -418,7 +425,9 @@ impl AdminCommand {
                 team_a_id: team_mac,
                 grid_id,
             }),
-            AdminCommand::ResendPregame | AdminCommand::RestartPregame => None,
+            AdminCommand::StartPregame
+            | AdminCommand::ResendPregame
+            | AdminCommand::RestartPregame => None,
         }
     }
 }
@@ -1494,6 +1503,39 @@ fn poll_pregame_admin_commands(
     signal
 }
 
+/// Drains `admin_rx` looking for an operator-issued `StartPregame`, while
+/// forwarding anything else straight through (same pattern as
+/// `poll_pregame_admin_commands`). Returns `true` once `StartPregame` has
+/// been seen. Split out from `poll_pregame_admin_commands` because that
+/// function's `PregameSignal` return type is scoped to "what to do with
+/// content that's already been sent" (resend/restart) -- this wait happens
+/// before any content exists yet.
+fn poll_for_pregame_start(
+    ctx: &AssignContext,
+    arena_id: &str,
+    admin_rx: &mut tokio::sync::mpsc::Receiver<AdminCommand>,
+) -> bool {
+    let mut started = false;
+    while let Ok(command) = admin_rx.try_recv() {
+        match command {
+            AdminCommand::StartPregame => started = true,
+            other => {
+                if let Some(wire_message) = other.into_wire_message() {
+                    let result = serde_json::to_string(&wire_message)
+                        .map_err(anyhow::Error::from)
+                        .and_then(|json| ctx.client.send(arena_id, &json));
+                    if let Err(err) = result {
+                        eprintln!(
+                            "arena: failed to relay admin command while waiting to start pregame: {err:#}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    started
+}
+
 /// Milliseconds since the Unix epoch, right now.
 fn current_unix_ms() -> u64 {
     std::time::SystemTime::now()
@@ -1563,8 +1605,13 @@ fn send_free_hint_fragments(
             text: fragment.clone(),
         };
         let payload = serde_json::to_string(&msg)?;
-        ctx.client.send(team_a_id, &payload).ok();
-        ctx.client.send(team_b_id, &payload).ok();
+        for (label, id) in [("team_a", team_a_id), ("team_b", team_b_id)] {
+            if let Err(err) = ctx.client.send(id, &payload) {
+                eprintln!(
+                    "pregame: failed to send free hint fragment {idx}/{total} to {label} (id {id}): {err:#}"
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -1687,8 +1734,18 @@ fn send_riddle_to_known_teams(ctx: &AssignContext, matchup: &Matchup, riddle: &s
         riddle: riddle.to_string(),
     })?;
     for team in [&matchup.team_a, &matchup.team_b] {
-        if let Some(info) = known_macs.get(team) {
-            ctx.client.send(&info.mac, &payload).ok();
+        match known_macs.get(team) {
+            Some(info) => {
+                if let Err(err) = ctx.client.send(&info.mac, &payload) {
+                    eprintln!(
+                        "pregame: failed to send riddle to {team} (mac {}): {err:#}",
+                        info.mac
+                    );
+                }
+            }
+            None => {
+                eprintln!("pregame: cannot send riddle to {team} -- no known MAC in the join registry");
+            }
         }
     }
     Ok(())
@@ -1749,7 +1806,27 @@ fn prompt_and_assign(
         poll_pregame_admin_commands(ctx, arena_id, admin_rx);
         sleep(POLL_INTERVAL);
     }
-    println!("Both teams joined. Sending pre-game riddle...");
+    println!("Both teams joined. Waiting for operator to start the pre-game riddle...");
+
+    // Both MACs are known, but don't fire the timed riddle automatically --
+    // give the operator an explicit "Start Pregame" action so they can
+    // confirm both boards are actually ready first (see `StartPregame`'s
+    // doc comment).
+    loop {
+        set_arena_pregame(
+            &ctx.master_state,
+            arena,
+            Some(Box::new(PregameState::ReadyToStart {
+                team_a: matchup.team_a.clone(),
+                team_b: matchup.team_b.clone(),
+            })),
+        );
+        if poll_for_pregame_start(ctx, arena_id, admin_rx) {
+            break;
+        }
+        sleep(POLL_INTERVAL);
+    }
+    println!("Operator started pre-game. Sending riddle...");
 
     let mut riddle = pick_and_track_riddle(ctx);
     send_riddle_to_known_teams(ctx, matchup, &riddle)?;
@@ -2683,7 +2760,7 @@ mod tests {
         };
 
         let (match_start_tx, mut match_start_rx) = tokio::sync::mpsc::channel::<MatchStartInput>(8);
-        let (_admin_tx, mut admin_rx) = tokio::sync::mpsc::channel::<AdminCommand>(8);
+        let (admin_tx, mut admin_rx) = tokio::sync::mpsc::channel::<AdminCommand>(8);
         let mut board_ids = std::collections::HashMap::new();
 
         let _handle = std::thread::spawn(move || {
@@ -2740,6 +2817,23 @@ mod tests {
         )));
 
         join_registry.record("beta", "bb:bb:bb:bb:bb:bb");
+
+        // Both teams joined, but the riddle must NOT fire automatically --
+        // it should sit in ReadyToStart until the operator explicitly
+        // starts it (the exact behavior change this test guards against
+        // regressing back to).
+        assert!(wait_for(&|state| matches!(
+            state,
+            ScoreboardState::LivePoolPlay { arena1_pregame: Some(p), .. }
+                if **p == PregameState::ReadyToStart {
+                    team_a: "alpha".to_string(),
+                    team_b: "beta".to_string(),
+                }
+        )));
+
+        admin_tx
+            .try_send(AdminCommand::StartPregame)
+            .expect("admin channel has capacity");
         assert!(wait_for(&|state| matches!(
             state,
             ScoreboardState::LivePoolPlay { arena1_pregame: Some(p), .. }

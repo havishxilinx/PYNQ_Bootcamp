@@ -38,7 +38,9 @@ fn resend_riddle_if_pregame_active_for(team: &str, mac: &str, master_state: &Mas
                 if let Ok(payload) =
                     serde_json::to_string(&RefereeMessage::PregameRiddle { riddle })
                 {
-                    client.send(mac, &payload).ok();
+                    if let Err(err) = client.send(mac, &payload) {
+                        eprintln!("pregame: failed to resend riddle to late-joining {team} (mac {mac}): {err:#}");
+                    }
                 }
                 return;
             }

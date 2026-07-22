@@ -139,12 +139,16 @@ until both teams are known to have joined.**
   MAC (get it from them out loud or from their board) and submit; this
   records it exactly as if they'd self-reported, and unblocks the ceremony
   the same way.
-- **The instant both teams are known**, they automatically receive a real
-  riddle and the scoreboard shows a live puzzle-race countdown with the
-  riddle text — this is real, not a placeholder. **Judging is entirely
-  manual**: whichever team calls out the correct answer first, tell you out
-  loud — there's no automatic check, so listen for it yourself. If nobody
-  gets it, decide however your event's rules say to (a coin flip is fine).
+- **Once both teams are known**, the panel switches to "both teams
+  joined -- ready to start" with a **Start Pregame** button. The riddle does
+  **not** fire automatically the instant both MACs are known — click Start
+  Pregame yourself once you've confirmed both boards are actually ready.
+  After you click it, both teams receive a real riddle and the scoreboard
+  shows a live puzzle-race countdown with the riddle text — this is real,
+  not a placeholder. **Judging is entirely manual**: whichever team calls
+  out the correct answer first, tell you out loud — there's no automatic
+  check, so listen for it yourself. If nobody gets it, decide however your
+  event's rules say to (a coin flip is fine).
 - If a team says they never received the riddle (or the free hint, once
   you're past that stage), use the **Resend** button in that same panel —
   or **Restart** for a fresh riddle/hint and a reset timer if something's
@@ -157,7 +161,7 @@ until both teams are known to have joined.**
   don't type an arena number.
 - Right after you submit, both teams automatically get a shared **free
   hint** (a real object + rough location on that match's actual grid,
-  delivered as several QR-coded fragments) — another live countdown shows on
+  delivered as several plain-text fragments) — another live countdown shows on
   the scoreboard. No operator action needed for this stage; the match starts
   automatically once it finishes.
 

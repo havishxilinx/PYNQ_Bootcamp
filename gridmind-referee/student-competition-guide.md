@@ -83,8 +83,11 @@ independently of pair count.
 Nothing in this window starts until **both teams for that match have
 connected** — the referee sends nothing timed while it's still just
 waiting for one or both boards to show up (your match's schedule slot can
-exist long before you're actually at the table). Once both are in, two
-things happen here, in order, before the match clock starts:
+exist long before you're actually at the table). Once both are in, the
+human operator explicitly starts the riddle race — it does **not** fire
+the instant your boards connect, so don't worry if there's a short pause
+after you both show as joined. Once started, two things happen here, in
+order, before the match clock starts:
 
 1. **The riddle race** (decides who goes first). The referee sends both
    teams the identical hard riddle (`pregame_riddle`) with a single-word
