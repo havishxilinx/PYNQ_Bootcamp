@@ -119,26 +119,42 @@ each match shows as `Locked` → `Ready` → `Live` → `Complete`.
 
 ## Step 6 — Run each match
 
-When a match's row shows **Ready**, click it to open the match-assign popup.
+A match's row can show **Ready** long before either team is actually
+present — the schedule is built the moment registration closes, which may
+be days before the tournament itself runs (team formation/registration one
+day, students building their client the next, the tournament the day
+after that). The pregame ceremony reflects this: **nothing timed starts
+until both teams are known to have joined.**
 
-- **MAC fields auto-fill and turn green** within about a second of each team's
+- **A "Waiting for both teams to connect" panel** appears above that
+  arena's admin panel the instant the match goes Ready, showing a
+  checkmark per team as they connect. Nothing else happens yet — no
+  riddle, no countdown — until both show a checkmark.
+- **MACs are detected automatically** within about a second of each team's
   board clicking Connect in their notebook (assuming they filled in
   `TEAM_SECRET` and `MASTER_ID`) — this is the Join Competition feature; it
-  polls `/api/join-status` in the background. If a field doesn't fill in
-  (wrong secret, board not connected yet, no `MASTER_ID` set), **you can still
-  type the MAC in manually** — the field stays editable as a fallback. Get the
-  MAC from the team out loud or from their board.
-- The instant the match becomes Ready (even before you open the popup), both
-  teams automatically receive a real riddle and the scoreboard shows a live
-  puzzle-race countdown with the riddle text — this is real, not a
-  placeholder. **Judging is entirely manual**: whichever team calls out the
-  correct answer first, tell you out loud — there's no automatic check, so
-  listen for it yourself. If nobody gets it, decide however your event's
-  rules say to (a coin flip is fine).
-- Pick that team as the **puzzle-race winner** in the popup.
-- Submit. This calls `/api/start-match` with `{arena, winner, team_a_mac,
-  team_b_mac}` — **arena must match which arena's Ready row you clicked**; the
-  popup handles this for you, you don't type an arena number.
+  polls `/api/join-status` in the background. If a team's board can't
+  self-report (wrong secret, `MASTER_ID` not set, or some other client-side
+  issue), use **Mark as Joined** in that same panel — type their name and
+  MAC (get it from them out loud or from their board) and submit; this
+  records it exactly as if they'd self-reported, and unblocks the ceremony
+  the same way.
+- **The instant both teams are known**, they automatically receive a real
+  riddle and the scoreboard shows a live puzzle-race countdown with the
+  riddle text — this is real, not a placeholder. **Judging is entirely
+  manual**: whichever team calls out the correct answer first, tell you out
+  loud — there's no automatic check, so listen for it yourself. If nobody
+  gets it, decide however your event's rules say to (a coin flip is fine).
+- If a team says they never received the riddle (or the free hint, once
+  you're past that stage), use the **Resend** button in that same panel —
+  or **Restart** for a fresh riddle/hint and a reset timer if something's
+  really stuck.
+- Click the Ready row to open the match-assign popup once both teams are
+  in. MAC fields auto-fill green (or stay manually editable as a fallback).
+  Pick the puzzle-race winner, submit. This calls `/api/start-match` with
+  `{arena, winner, team_a_mac, team_b_mac}` — **arena must match which
+  arena's Ready row you clicked**; the popup handles this for you, you
+  don't type an arena number.
 - Right after you submit, both teams automatically get a shared **free
   hint** (a real object + rough location on that match's actual grid,
   delivered as several QR-coded fragments) — another live countdown shows on

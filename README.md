@@ -1,6 +1,34 @@
-# GridMind Deployment Package (v3)
+# GridMind Deployment Package (v4)
 
-## What's new in v3
+## What's new in v4
+
+- **New: `6-board-3-machine-tournament-guide.md`.** A complete, exact
+  runbook for a real 6-team event split across 3 machines (Master+broker,
+  and one Arena+Genesis pair per machine) — covers server setup, a 10-file
+  grid pool, client setup, and an exact step-by-step walkthrough of one
+  full match with who does what marked (automatic / operator click / team
+  click / physical hands-on-cards).
+- **The pregame ceremony now waits for both teams to actually join.**
+  Previously the puzzle-race riddle (and its countdown) fired the instant
+  a match became `Ready` in the schedule — fine for a same-day event, but
+  wrong for the realistic case of registration happening well before the
+  tournament itself runs (team formation one day, building a client the
+  next, the tournament later). The referee now shows a "waiting for both
+  teams to connect" state and holds everything until both teams' MACs are
+  known — via `join_competition` or a new operator **Mark as Joined**
+  manual-entry fallback (`/api/manual-join`) for a board that can't
+  self-report.
+- **Free hints are now plain text, not QR-encoded images.** Removes an
+  unnecessary image encode/decode round-trip on both ends — one less thing
+  that could silently fail with no error (which is exactly what happened
+  in a real hardware notebook missing its QR decoder). No functional loss:
+  the hint was never meant to be a vision challenge, only the paid hint's
+  row/col digit images are.
+- Everything else (comms resilience, deterministic/persisted team
+  secrets, Resend/Restart controls, the 8 fixed-approach notebooks) is
+  unchanged from v3.
+
+## What was new in v3
 
 - **Communication resilience.** A single failed broker send used to crash
   the whole Arena process mid-match, leaving both boards waiting on a
@@ -74,7 +102,9 @@ Configuration cell, and run it top to bottom. Full rules and wire protocol:
 | `data/` | Grid pool, riddle banks, MNIST digit assets, `game_config.json` — read at runtime relative to wherever you run the binary from. **Run the binary from inside `server/`,** or these won't be found. |
 | `broker/` | The p2p message broker (`server.py`) every board/Master/Arena talks through. |
 | `example_grid.json`, `example_pools_config.json`, `kv260_test_*.json` | Fixture files for `--config` mode / local testing. |
-| `operators-guide.md`, `manual-demo-walkthrough.md`, `three-machine-demo-guide.md`, `kv260-real-hardware-demo-guide.md` | How to actually run things — start here. |
+| `operators-guide.md` | The general reference — every feature, timing/scoring rules, troubleshooting table. |
+| `6-board-3-machine-tournament-guide.md` | **Start here for a real event**: exact steps for 6 teams across 3 machines, a 10-grid pool, and a full single-match walkthrough with who does what. |
+| `manual-demo-walkthrough.md`, `three-machine-demo-guide.md`, `kv260-real-hardware-demo-guide.md` | Smaller rehearsal/practice-run guides for specific test scenarios. |
 | `setup-server.sh` | One-time setup (see Quick start). |
 
 **Not included:** `static/*.html` (the operator console, scoreboard, and
