@@ -1,17 +1,35 @@
-# GridMind Deployment Package (v2)
+# GridMind Deployment Package (v3)
 
-## What's new in v2
+## What's new in v3
 
-- **Practice Mode.** A new panel in the operator console (shown during the
-  live Schedule phase) lets one team play alone against the referee's own
-  built-in bot opponent ("Referee Bot") to validate their client against
-  the real referee — no second real team needed, and it never touches
-  pool standings or the Grand Final. See "Practice Mode" in
-  `server/operators-guide.md` and the matching FAQ entry in
-  `client/student-competition-guide.md`.
-- Everything else is unchanged from v1 — same notebooks, same client
-  packages, same broker. Only `server/gridmind-referee` (rebuilt) and the
-  two docs above differ.
+- **Communication resilience.** A single failed broker send used to crash
+  the whole Arena process mid-match, leaving both boards waiting on a
+  `card_revealed` that would never arrive. The referee now retries
+  transient send/receive failures, keeps delivering the rest of a message
+  batch after one recipient fails, and survives a match-ending
+  communication error by moving on to the next assignment instead of
+  dying for the rest of the tournament.
+- **Team secrets no longer silently expire on restart.** `--config` mode
+  now derives secrets deterministically from the team name (same name,
+  same secret, every restart), and a Master restart mid-registration
+  restores already-registered teams' secrets instead of forgetting them.
+  Previously either case could silently invalidate a board's
+  already-typed-in `TEAM_SECRET` with no error anywhere.
+- **Pregame Resend/Restart controls.** The operator console now shows a
+  live pregame ceremony panel (previously nothing was shown there at all)
+  with Resend/Restart buttons for the puzzle-race riddle or free hint — a
+  team that joins even slightly late no longer permanently misses the
+  riddle, and there's now a manual recovery path either way.
+- **8 new fixed-approach match-client notebooks**
+  (`PYNQ_302-<approach>-<Red|Blue>.ipynb`, one per detection approach x
+  team color) replace the old plain `-Red.ipynb`/`-Blue.ipynb` pair — no
+  approach-switching dropdown, and a fixed stage tracker (Join -> Riddle
+  -> Free Hint -> Play/Wait sub-stages) instead of free-form status text.
+  The original all-in-one `PYNQ_302-Referee_Match_Client.ipynb` is
+  unchanged and still useful for comparing approaches on one board.
+- Everything else is unchanged from v2 — same broker, same client
+  libraries. `server/gridmind-referee` (rebuilt), `server/operators-guide.md`,
+  `client/student-competition-guide.md`, and the notebook set differ.
 
 ---
 
@@ -70,8 +88,8 @@ from source.
 | Path | What it is |
 |---|---|
 | `notebooks/PYNQ_301-*.ipynb` | Vision detection tuning notebook (local practice, no networking) — two variants (standard + LLM-assisted). |
-| `notebooks/PYNQ_302-Referee_Match_Client.ipynb` | The real competition client — detection (all four approaches) + wire protocol + Genesis, in one notebook. |
-| `notebooks/PYNQ_302-*-Red.ipynb` / `-Blue.ipynb` | Same notebook, pre-set `TEAM_NAME` (`'red'`/`'blue'`) — for a quick two-board test pair. These names are unrelated to Genesis's own `team_red`/`team_blue` arm assignment, which the referee decides dynamically per match. |
+| `notebooks/PYNQ_302-Referee_Match_Client.ipynb` | The real competition client — detection (all four approaches, switchable via a dropdown) + wire protocol + Genesis, in one notebook. Useful for comparing approaches on a single board. |
+| `notebooks/PYNQ_302-<approach>-<Red\|Blue>.ipynb` | Same client, but with one detection approach fixed (no dropdown) and `TEAM_NAME` pre-set to `'red'`/`'blue'` — 8 files total (`yolo_full_frame`, `yolo_grid_crops`, `aruco_border`, `aruco_per_card`, x 2 colors). Shows a fixed stage tracker (Join -> Riddle -> Free Hint -> Play/Wait sub-stages) instead of free-form status text, for a simpler widget GUI during a live demo. The color names are unrelated to Genesis's own `team_red`/`team_blue` arm assignment, which the referee decides dynamically per match. |
 | `pynqp2p_pkg/` | The `pynqp2p` client library + a vendored `getmac` wheel (no internet needed on the board). |
 | `pynqsim_pkg/` | The `pynqsim` Genesis client library + a vendored `requests` wheel — **only needed if this board's arena has Genesis configured.** |
 | `student-competition-guide.md` | The full rulebook: rules, scoring, tournament format, wire protocol, rescue code snippets. |
