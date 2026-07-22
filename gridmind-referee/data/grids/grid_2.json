@@ -1,7 +1,34 @@
 {
   "positions": {
-    "A1": "dog", "A2": "bottle", "A3": "dog", "A4": "bottle", "A5": "dog",
-    "B1": "bottle", "B2": "dog", "B3": "bottle", "B4": "dog", "B5": "bottle",
-    "C1": "dog", "C2": "bottle", "C3": "dog", "C4": "bottle", "C5": "dog"
+    "A1": "person",
+    "A2": "dog",
+    "A3": "bottle",
+    "A4": "sheep",
+    "A5": "cat",
+    "A6": "bicycle",
+    "B1": "pottedplant",
+    "B2": "car",
+    "B3": "diningtable",
+    "B4": "cow",
+    "B5": "person",
+    "B6": "sheep",
+    "C1": "diningtable",
+    "C2": "sofa",
+    "C3": "pottedplant",
+    "C4": "cow",
+    "C5": "tvmonitor",
+    "C6": "boat",
+    "D1": "aeroplane",
+    "D2": "bicycle",
+    "D3": "boat",
+    "D4": "tvmonitor",
+    "D5": "sofa",
+    "D6": "chair",
+    "E1": "dog",
+    "E2": "car",
+    "E3": "cat",
+    "E4": "bottle",
+    "E5": "aeroplane",
+    "E6": "chair"
   }
 }
