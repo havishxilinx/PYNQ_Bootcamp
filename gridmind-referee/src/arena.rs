@@ -241,6 +241,24 @@ fn run_one_match(
         )?;
     }
     send_all(client, state.push_initial_turn_signals())?;
+    // Report the freshly-started match to the Master immediately, not just
+    // reactively on the first student message -- otherwise the scoreboard
+    // has genuinely nothing for this arena (pregame already cleared, no
+    // score update sent yet) until either team's first flip, which
+    // `arena.html` renders as "Arena N idle" even though the match is
+    // actually running and both boards already have `your_turn`/`wait`.
+    report_to_master(
+        client,
+        master_id,
+        MatchReport {
+            arena: arena_num,
+            pool: pool_num,
+            state: &state,
+            now: Instant::now(),
+            puzzle_winner: &assignment.first_turn_team,
+            genesis_stream_url: genesis_stream_url.clone(),
+        },
+    )?;
 
     loop {
         for raw in client.receive_all()? {
