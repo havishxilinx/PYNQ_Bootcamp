@@ -104,6 +104,17 @@ Open `http://<machine-1-ip>:38800/arena?arena=2` on/near this machine.
 
 Genesis is entirely optional and cosmetic on both machines — skip it (omit `--genesis-*` flags) if you don't need the simulated-arm visual; the real match plays identically either way.
 
+### Genesis configuration — who needs what, exactly
+
+| Component | What it needs | How it gets it |
+|---|---|---|
+| **Genesis server** | The 5 env vars above (`GENESIS_PORT`, `GENESIS_STREAM_PORT`, `GENESIS_BACKEND`, `GENESIS_SHOW_VIEWER`, `GENESIS_ADMIN_PASSWORD`) | You set them before `run_server.py` |
+| **Master** | **Nothing.** No `--genesis-*` flag exists on `gridmind-referee master` at all. | N/A |
+| **Arena** | `--genesis-url`, `--genesis-admin-password` (must match that Genesis server's `GENESIS_ADMIN_PASSWORD`), `--genesis-stream-port` (must match that Genesis server's `GENESIS_STREAM_PORT`) | You pass them on the command line, once, per arena |
+| **Student notebook / client** | **Nothing to type in.** No Genesis URL or team ID field exists in Match Configuration. | Arrives automatically inside the `game_start` message (`genesis_team_id`, `genesis_url`) the moment the match starts — the notebook connects to Genesis on its own from there. The only thing a student does is optionally `pip install pynqsim` (via `setup-client.sh`) so that automatic connection succeeds; without it, the arm animation is silently skipped and the real match is unaffected. |
+
+If a board's console never shows a `🤖 Genesis: ...` badge during a match, check the *Arena's* `--genesis-url`/password/port first — that's the only place Genesis is actually configured.
+
 ## Part 2 — Grid pool (10 files)
 
 On **Machine 1**, in `server/data/grids/`, place exactly the grids you want in play for this event — clear out anything left from earlier testing first:
