@@ -39,6 +39,15 @@ source venv/bin/activate
 
 # 3. Install dependencies (use `uv pip install -e .` if you created the venv with uv)
 pip install -e .
+
+# 4. Install torch -- NOT covered by step 3. setup.py deliberately excludes it
+#    since the right build depends on your GPU backend; skipping this step
+#    means `python scripts/run_server.py` fails with
+#    `ModuleNotFoundError: No module named 'torch'`.
+#    CPU-only (safe default, works everywhere, matches GENESIS_BACKEND=cpu below):
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+#    AMD GPU (ROCm) instead, if you want GPU acceleration and have ROCm set up:
+#    pip install torch --index-url https://download.pytorch.org/whl/rocm5.7
 ```
 
 ## Configuration
