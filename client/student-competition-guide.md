@@ -184,17 +184,36 @@ way.
 
 ### Paid hints (mid-match, on-demand)
 
-Request a hint for a specific object name during your own active turn. It
-costs **1 point**, deducted immediately, capped at **2 attempts per match**,
-and only available if your score is currently above 0. You get back **two
-small digit images** (base64-encoded PNGs) — one for the row number, one for
-the column number — not text. Read them yourself (row letters map to numbers
-the same way as everywhere else: A=1, B=2...). If your request is outside
-those conditions (score too low, already used both attempts,
-unknown/mistyped object name — matching is case-sensitive), it's either
-silently ignored (no cost) or rejected with a reason (still costs the point
-— see [Section 12](#12-wire-protocol-reference) for the exact rejection
-reasons).
+Request a hint for a specific object name. It costs **1 point**, deducted
+immediately, capped at **2 attempts per match**, and only available if your
+score is currently above 0. You get back **two small digit images**
+(base64-encoded PNGs) — one for the row number, one for the column number —
+not text. Read them yourself (row letters map to numbers the same way as
+everywhere else: A=1, B=2...). If your request is outside those conditions
+(score too low, already used both attempts, unknown/mistyped object name —
+matching is case-sensitive), it's either silently ignored (no cost) or
+rejected with a reason (still costs the point — see
+[Section 12](#12-wire-protocol-reference) for the exact rejection reasons).
+
+**You can request a hint two ways, and both are fully supported:**
+
+1. **During your own active turn** — resolves immediately, but the
+   request/response round trip comes out of your 120-second turn clock, same
+   as everything else you do on your turn.
+2. **While it's the opponent's turn (recommended)** — send the exact same
+   `hint_request` message any time you're *not* active. The referee queues
+   it silently (no response yet) and automatically resolves it the instant
+   your turn actually starts — the `hint_response`/`hint_rejected` message
+   arrives **before** your `your_turn` message, so it costs you nothing off
+   your own clock. Only your latest queued request is kept if you send more
+   than one while waiting. All the same conditions (score > 0, under the
+   cap, valid object) are checked at the moment it resolves, not when you
+   queued it — so if the object gets fully revealed by the other team's
+   flips before your turn starts, you may still get "object already fully
+   resolved" (still costs the point).
+
+There's no way to know your queued hint was accepted until it resolves —
+don't block waiting for a response you sent while you weren't active.
 
 ### Free hints (pre-game, shared)
 
@@ -323,7 +342,7 @@ Arena Agent.
 | `flip` | `team, pos` | Choosing a card to flip, on your turn |
 | `flip_both` | `team, pos1, pos2` | Alternative to two sequential `flip` calls — both positions at once, atomic validation. Only valid as the first action of a turn. |
 | `report_result` | `team, pos1, pos2, cls1, cls2, claim` | After detecting both of your flipped cards, submitting your own match/no_match comparison |
-| `hint_request` | `team, object` | Optional, only during your active turn |
+| `hint_request` | `team, object` | Optional. During your own turn, resolves immediately. While waiting (not your turn), it's queued and auto-resolves right before your next `your_turn` — see [Section 7](#7-hints). |
 | `join` | `team, mac, secret` | Optional, once, right after connecting (`join_competition`) |
 
 ### Messages you RECEIVE from the referee
@@ -669,15 +688,23 @@ and don't know what to do with it."
 solved visually or with a small classifier on your side). This module only
 shows the request/response mechanics.
 
+**Best practice:** call `request_hint` while it's still the opponent's
+turn (`wait` state), not during your own — it costs nothing extra, and the
+response arrives before your `your_turn` instead of eating your 120-second
+clock. Requesting mid-turn still works, it's just slower for you.
+
 ```python
 def request_hint(client, obj_name):
     client.send({'type': 'hint_request', 'team': TEAM_NAME, 'object': obj_name})
 
 def wait_for_hint_response(client, timeout=5.0):
-    """No response within the timeout means silent refusal (score <= 0, or
-    you've already used both your hint attempts this match) -- NOT an error,
-    don't retry in a loop. On acceptance, returns the two base64-encoded PNG
-    digit images (row, then column) -- not text."""
+    """Only meaningful if you requested during your OWN turn -- a hint
+    requested while waiting resolves silently later, right before your next
+    your_turn, so there's nothing to poll for here. No response within the
+    timeout means silent refusal (score <= 0, or you've already used both
+    your hint attempts this match) -- NOT an error, don't retry in a loop.
+    On acceptance, returns the two base64-encoded PNG digit images (row,
+    then column) -- not text."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         for msg in client.poll():
