@@ -121,10 +121,14 @@ turn order (whoever won the riddle race goes first).
 4. **The referee checks your claim against the real answer key:**
    - **Correct match:** points awarded, and **your turn continues** — go
      back to step 1.
-   - **Wrong claim, or genuinely no match:** your turn ends. If you were
-     wrong, the referee also tells you the *true* classes of both cards —
-     update your own memory with that, don't keep re-guessing the same wrong
-     pair.
+   - **Wrong claim, or genuinely no match:** your turn ends. The `no_match`
+     response still includes the two cards' true classes on the wire, but
+     **don't build your strategy around it** — the reference client
+     deliberately does not use it to auto-correct your board memory
+     anymore, and the referee is expected to stop sending it as golden
+     truth in a future update. A misdetected pair needs to be caught by
+     your own model re-observing that position, not by reading the
+     answer off a wrong guess.
 5. **You keep receiving every `card_revealed` broadcast even during the
    opponent's turn.** Both teams see everything that's ever flipped — this
    is deliberate. A team that ignores the opponent's turn is throwing away
@@ -360,7 +364,7 @@ Arena Agent.
 | `card_revealed` | `pos` | Broadcast to both teams on every physical flip — no class label, run your own model |
 | `invalid` | `reason` | Your last `flip`/`flip_both` request was rejected — pick a different position |
 | `match` | `cls, pos1, pos2, scorer, scores, remaining` | A claimed match was confirmed correct |
-| `no_match` | `pos1, pos2, cls1, cls2, scores` | Turn ended — wrong claim (penalty) or genuinely no match (no penalty). `cls1`/`cls2` are golden truth. |
+| `no_match` | `pos1, pos2, cls1, cls2, scores` | Turn ended — wrong claim (penalty) or genuinely no match (no penalty). `cls1`/`cls2` are still golden truth on the wire for now, but treat this as a legacy field — the reference client ignores it, and a future update is expected to stop sending it as an answer key. |
 | `hint_response` | `row_digit_png_base64, col_digit_png_base64` | Paid hint accepted — two digit images, not text |
 | `hint_rejected` | `reason` | Paid hint rejected (still costs the point) — `"object already fully resolved"` or `"unknown object"` |
 | `game_over` | `winner, scores` | Match complete |
@@ -578,10 +582,11 @@ def on_match_confirmed(pos1, pos2):
 
 def on_no_match(pos1, pos2, true_cls1, true_cls2):
     """true_cls1/true_cls2 come from the referee's no_match response and are
-    GOLDEN TRUTH -- overwrite your own (possibly wrong) detection with them so
-    future turns don't keep retrying a pair your vision model misread."""
-    board_memory[pos1] = true_cls1
-    board_memory[pos2] = true_cls2
+    still golden truth on the wire for now, but deliberately UNUSED here --
+    self-correcting board_memory from the answer key defeats the point of
+    the vision challenge. If your model misread a card, catch it by letting
+    that position get re-observed naturally (e.g. via a future
+    card_revealed), not by reading the answer off a wrong guess."""
 ```
 
 ### Module D — Position-choice strategy (baseline)
@@ -807,9 +812,12 @@ No — the response-time tier applies even to timeouts and declines now (see
 No — pick one per turn. `flip_both` only works as your turn's first action.
 
 **Q: What happens if our vision model misdetects a card?**
-You'll get a `no_match` (or a wrong `match` claim penalty) and the referee's
-response includes the true classes — use that to self-correct your board
-memory rather than re-guessing the same wrong pair.
+You'll get a `no_match` (or a wrong `match` claim penalty). The response
+still includes the true classes on the wire for now, but don't build your
+strategy around it — the reference client deliberately ignores it, and a
+future referee update is expected to stop sending it. Catch a misdetection
+by re-observing that position yourself the next time it comes up, not by
+reading the answer off a wrong guess.
 
 **Q: Does Genesis affect our score if a call fails?**
 No. Genesis is 100% cosmetic — a failed or skipped Genesis call never
