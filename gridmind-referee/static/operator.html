@@ -192,7 +192,7 @@
       <label><input type="checkbox" id="popup-force-start"> Start anyway even if a team hasn't joined (manual MAC entry fallback)</label>
     </div>
     <div class="popup-actions">
-      <button onclick="submitMatch()">Start Match</button>
+      <button onclick="submitMatch()">Confirm Winner</button>
       <button onclick="closePopup()">Cancel</button>
     </div>
   </div>
@@ -360,10 +360,12 @@ async function submitMatch() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ arena: popupArenaNum, winner, team_a_mac: macA, team_b_mac: macB, force }),
   });
-  if (await reportIfFailed(response, 'Start Match')) {
+  if (await reportIfFailed(response, 'Confirm Winner')) {
     closePopup();
   }
 }
+
+function beginMatch(arenaNum) { postAdmin('begin-match', { arena: arenaNum }); }
 
 // ── Live match admin overrides ────────────────────────────────────────────────
 async function postAdmin(path, body) {
@@ -463,6 +465,19 @@ function renderPregamePanel(arenaNum, pregame) {
       <div>${pregame.team_a} vs ${pregame.team_b} -- both teams joined, ready to start.</div>
       <div class="admin-actions">
         <button onclick="startPregame(${arenaNum})">Start Pregame</button>
+      </div>
+    `;
+    return;
+  }
+
+  if (pregame.stage === 'winner_confirmed') {
+    // Confirming the winner (the popup above) and sending the free hint
+    // are deliberately two separate actions -- nothing timed happens
+    // until Start Match is clicked here.
+    container.innerHTML = `
+      <div>${pregame.team_a} vs ${pregame.team_b} -- winner confirmed: <strong>${pregame.winner}</strong>.</div>
+      <div class="admin-actions">
+        <button onclick="beginMatch(${arenaNum})">Start Match</button>
       </div>
     `;
     return;

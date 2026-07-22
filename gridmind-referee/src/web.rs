@@ -43,6 +43,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/admin/stop", post(admin_stop))
         .route("/api/admin/finish", post(admin_finish))
         .route("/api/admin/start-pregame", post(admin_start_pregame))
+        .route("/api/admin/begin-match", post(admin_begin_match))
         .route("/api/admin/resend-pregame", post(admin_resend_pregame))
         .route("/api/admin/restart-pregame", post(admin_restart_pregame))
         .route("/api/start-practice-match", post(start_practice_match))
@@ -346,6 +347,21 @@ async fn admin_finish(
         Err(response) => return response,
     };
     send_result_status(sender.try_send(crate::master::AdminCommand::Finish))
+}
+
+/// Sends the free hint once the operator has confirmed the puzzle winner
+/// (via `/api/start-match`) and is ready to proceed -- a no-op (silently
+/// ignored, not an error) if this arena isn't currently waiting on this
+/// exact action.
+async fn admin_begin_match(
+    State(state): State<AppState>,
+    Json(body): Json<AdminArenaRequest>,
+) -> impl IntoResponse {
+    let sender = match admin_sender(&state, body.arena) {
+        Ok(sender) => sender,
+        Err(response) => return response,
+    };
+    send_result_status(sender.try_send(crate::master::AdminCommand::BeginMatch))
 }
 
 /// Starts the pre-game riddle once both teams have joined -- a no-op
@@ -1000,6 +1016,18 @@ mod tests {
         assert_eq!(
             rx.admin_arena1.try_recv(),
             Ok(crate::master::AdminCommand::StartPregame)
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_begin_match_sends_on_the_admin_channel() {
+        let (state, mut rx) = test_app_state();
+        let app = build_router(state);
+        let response = post_json(app, "/api/admin/begin-match", r#"{"arena":1}"#).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            rx.admin_arena1.try_recv(),
+            Ok(crate::master::AdminCommand::BeginMatch)
         );
     }
 

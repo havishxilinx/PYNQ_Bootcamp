@@ -164,6 +164,14 @@ function renderPregamePanel(pregame, label, extraClass) {
     </div>`;
   }
 
+  if (pregame.stage === 'winner_confirmed') {
+    return `<div class="panel ${extraClass || ''}">
+      <h3>${esc(label)}</h3>
+      <div class="puzzle-banner">🏆 Winner confirmed: ${esc(pregame.winner)} -- waiting for operator to start the match</div>
+      <div class="team-row"><span>${esc(pregame.team_a)}</span><span>vs</span><span>${esc(pregame.team_b)}</span></div>
+    </div>`;
+  }
+
   const isPuzzleRace = pregame.stage === 'puzzle_race';
   const banner = isPuzzleRace ? '🧩 Puzzle Race in progress' : '🔍 Free Hint window';
   const riddleBlock = isPuzzleRace

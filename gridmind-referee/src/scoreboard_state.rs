@@ -127,6 +127,18 @@ pub enum PregameState {
         deadline_unix_ms: u64,
         riddle: String,
     },
+    /// The operator has recorded who won the puzzle race, but the free hint
+    /// is deliberately held back until a second, separate operator action
+    /// (`BeginMatch`) -- confirming the winner and sending the free hint
+    /// used to be the same click, which gave the operator no room to do
+    /// anything (confer with the teams, etc.) in between. No
+    /// `deadline_unix_ms` here either: nothing is timed until Start Match.
+    #[serde(rename = "winner_confirmed")]
+    WinnerConfirmed {
+        team_a: String,
+        team_b: String,
+        winner: String,
+    },
     #[serde(rename = "free_hints")]
     FreeHints {
         team_a: String,

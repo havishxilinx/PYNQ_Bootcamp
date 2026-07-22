@@ -386,6 +386,13 @@ pub enum AdminCommand {
     /// Handled entirely within `prompt_and_assign`, same as
     /// `ResendPregame`/`RestartPregame` -- never reaches the Arena process.
     StartPregame,
+    /// Sends the free hint once the operator has confirmed the puzzle
+    /// winner and is ready to proceed -- confirming the winner (the
+    /// existing `/api/start-match` popup) and sending the free hint used
+    /// to be the same action, giving the operator no separate "Start
+    /// Match" moment. Handled entirely within `prompt_and_assign`, same
+    /// as `StartPregame` -- never reaches the Arena process.
+    BeginMatch,
     /// Resends the current pregame stage's content (the puzzle-race riddle,
     /// or the free-hint fragments) to both teams' currently-known MACs,
     /// without resetting anything -- an operator escape hatch for "a team
@@ -426,6 +433,7 @@ impl AdminCommand {
                 grid_id,
             }),
             AdminCommand::StartPregame
+            | AdminCommand::BeginMatch
             | AdminCommand::ResendPregame
             | AdminCommand::RestartPregame => None,
         }
@@ -1503,37 +1511,33 @@ fn poll_pregame_admin_commands(
     signal
 }
 
-/// Drains `admin_rx` looking for an operator-issued `StartPregame`, while
-/// forwarding anything else straight through (same pattern as
-/// `poll_pregame_admin_commands`). Returns `true` once `StartPregame` has
-/// been seen. Split out from `poll_pregame_admin_commands` because that
+/// Drains `admin_rx` looking for `target` specifically (e.g. `StartPregame`
+/// or `BeginMatch`), while forwarding anything else straight through (same
+/// pattern as `poll_pregame_admin_commands`). Returns `true` once `target`
+/// has been seen. Split out from `poll_pregame_admin_commands` because that
 /// function's `PregameSignal` return type is scoped to "what to do with
-/// content that's already been sent" (resend/restart) -- this wait happens
-/// before any content exists yet.
-fn poll_for_pregame_start(
+/// content that's already been sent" (resend/restart) -- these waits happen
+/// before their stage's content exists yet.
+fn poll_for_admin_gate(
     ctx: &AssignContext,
     arena_id: &str,
     admin_rx: &mut tokio::sync::mpsc::Receiver<AdminCommand>,
+    target: &AdminCommand,
 ) -> bool {
-    let mut started = false;
+    let mut seen = false;
     while let Ok(command) = admin_rx.try_recv() {
-        match command {
-            AdminCommand::StartPregame => started = true,
-            other => {
-                if let Some(wire_message) = other.into_wire_message() {
-                    let result = serde_json::to_string(&wire_message)
-                        .map_err(anyhow::Error::from)
-                        .and_then(|json| ctx.client.send(arena_id, &json));
-                    if let Err(err) = result {
-                        eprintln!(
-                            "arena: failed to relay admin command while waiting to start pregame: {err:#}"
-                        );
-                    }
-                }
+        if command == *target {
+            seen = true;
+        } else if let Some(wire_message) = command.into_wire_message() {
+            let result = serde_json::to_string(&wire_message)
+                .map_err(anyhow::Error::from)
+                .and_then(|json| ctx.client.send(arena_id, &json));
+            if let Err(err) = result {
+                eprintln!("arena: failed to relay admin command during pregame: {err:#}");
             }
         }
     }
-    started
+    seen
 }
 
 /// Milliseconds since the Unix epoch, right now.
@@ -1821,7 +1825,7 @@ fn prompt_and_assign(
                 team_b: matchup.team_b.clone(),
             })),
         );
-        if poll_for_pregame_start(ctx, arena_id, admin_rx) {
+        if poll_for_admin_gate(ctx, arena_id, admin_rx, &AdminCommand::StartPregame) {
             break;
         }
         sleep(POLL_INTERVAL);
@@ -1875,8 +1879,6 @@ fn prompt_and_assign(
         sleep(POLL_INTERVAL);
     };
 
-    set_arena_pregame(&ctx.master_state, arena, None);
-
     // Freshly-entered MACs always win -- no lookup/fallback needed here,
     // the operator just supplied them. board_ids is still updated so it
     // reflects the latest known MAC per team, even though nothing reads
@@ -1885,6 +1887,32 @@ fn prompt_and_assign(
     let team_b_id = input.team_b_mac;
     board_ids.insert(matchup.team_a.clone(), team_a_id.clone());
     board_ids.insert(matchup.team_b.clone(), team_b_id.clone());
+
+    println!(
+        "Winner confirmed: {}. Waiting for operator to start the match...",
+        input.puzzle_winner
+    );
+
+    // Confirming the winner and sending the free hint used to be the same
+    // action -- give the operator a distinct "Start Match" gate here so
+    // there's room to do anything else in between (confer with teams,
+    // reset the physical grid, etc.) before the free-hint clock starts.
+    loop {
+        set_arena_pregame(
+            &ctx.master_state,
+            arena,
+            Some(Box::new(PregameState::WinnerConfirmed {
+                team_a: matchup.team_a.clone(),
+                team_b: matchup.team_b.clone(),
+                winner: input.puzzle_winner.clone(),
+            })),
+        );
+        if poll_for_admin_gate(ctx, arena_id, admin_rx, &AdminCommand::BeginMatch) {
+            break;
+        }
+        sleep(POLL_INTERVAL);
+    }
+    println!("Operator started the match. Sending free hint...");
 
     send_free_hint(
         ctx,
@@ -2840,12 +2868,38 @@ mod tests {
                 if matches!(**p, PregameState::PuzzleRace { .. })
         )));
 
+        // Operator confirms the puzzle winner -- must land on WinnerConfirmed,
+        // NOT skip straight to sending the free hint (the exact behavior
+        // change this half of the test guards against regressing back to).
+        match_start_tx
+            .try_send(MatchStartInput {
+                puzzle_winner: "alpha".to_string(),
+                team_a_mac: "aa:aa:aa:aa:aa:aa".to_string(),
+                team_b_mac: "bb:bb:bb:bb:bb:bb".to_string(),
+            })
+            .expect("match-start channel has capacity");
+        assert!(wait_for(&|state| matches!(
+            state,
+            ScoreboardState::LivePoolPlay { arena1_pregame: Some(p), .. }
+                if **p == PregameState::WinnerConfirmed {
+                    team_a: "alpha".to_string(),
+                    team_b: "beta".to_string(),
+                    winner: "alpha".to_string(),
+                }
+        )));
+
+        // Only once the operator sends BeginMatch does the free hint go out.
+        admin_tx
+            .try_send(AdminCommand::BeginMatch)
+            .expect("admin channel has capacity");
+        assert!(wait_for(&|state| matches!(
+            state,
+            ScoreboardState::LivePoolPlay { arena1_pregame: Some(p), .. }
+                if matches!(**p, PregameState::FreeHints { .. })
+        )));
+
         // Not joining `handle` here on purpose: past this point
-        // `prompt_and_assign` moves on to `send_free_hint`, which holds
-        // its own stage open for `free_hint_secs` (60s by default) --
-        // real behavior this test isn't concerned with. Dropping
-        // `match_start_tx` unblocks it with a clean "channel closed"
-        // error on this background thread instead of a 60s test.
-        drop(match_start_tx);
+        // `send_free_hint` holds its own stage open for `free_hint_secs`
+        // (60s by default) -- real behavior this test isn't concerned with.
     }
 }

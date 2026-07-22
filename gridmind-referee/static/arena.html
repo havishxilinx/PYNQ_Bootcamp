@@ -199,6 +199,14 @@ function renderPregameStrip(pregame) {
       <div class="team-row"><span>${esc(pregame.team_a)}</span><span>vs</span><span>${esc(pregame.team_b)}</span></div>`;
   }
 
+  if (pregame.stage === 'winner_confirmed') {
+    // Confirming the winner and sending the free hint are two separate
+    // operator actions -- no deadline exists yet during this wait either.
+    activeView = null;
+    return `<div class="puzzle-banner">🏆 Winner confirmed: ${esc(pregame.winner)} -- waiting for operator to start the match</div>
+      <div class="team-row"><span>${esc(pregame.team_a)}</span><span>vs</span><span>${esc(pregame.team_b)}</span></div>`;
+  }
+
   const isPuzzleRace = pregame.stage === 'puzzle_race';
   activeView = 'pregame';
   pregameDeadlineMs = pregame.deadline_unix_ms;
