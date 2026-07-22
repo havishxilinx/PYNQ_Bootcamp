@@ -223,9 +223,12 @@ Available on the arena's admin panel once a match is actually live (not
 during pregame — see the pregame-specific Resend/Restart/Start Pregame/Start
 Match controls in Step 6):
 
-- **Pause / Resume** — freezes/resumes the turn timer. Pausing mid-turn does
-  not freeze the *referee's* 120s clock from the student boards' point of
-  view, only the scoreboard's own countdown display — use sparingly.
+- **Pause / Resume** — genuinely freezes the turn clock, with zero scoring
+  side effect: resuming after any real-world gap (a 10-minute pause included)
+  leaves exactly the same time remaining as when you paused. Incoming
+  student messages are dropped while paused (not queued for later), so
+  there's nothing to "catch up on" after resuming either. Safe to use
+  liberally — this is the right first move for almost any mid-match problem.
 - **Set Score** — directly overwrites one team's score to an absolute value.
   For correcting a scoring dispute, not for normal play.
 - **Finish Now** — ends the match immediately, crediting whoever's currently
@@ -240,6 +243,35 @@ Match controls in Step 6):
   Finish when something went genuinely wrong (wrong grid loaded, wrong
   teams assigned, a technical failure mid-match) rather than a normal
   early end where a score should still count.
+
+### If a board dies, disconnects, or otherwise stops responding mid-match
+
+1. **Pause immediately.** This costs nothing — see above. Don't let the other
+   team's clock (or the disconnected team's own clock, next time it's their
+   turn) run out from something outside their control.
+2. **Check whether it's actually dead, or just the widget GUI.** A
+   background thread inside the notebook can flood the cell's raw output
+   during active play, which in some Jupyter frontends visually buries the
+   widget controls even though the board is still fully connected and
+   playing correctly — it looks exactly like "my board died" from the
+   student's seat. Have them scroll up, or just watch the scoreboard/arena
+   page: if their score/turns are still updating there, the board is fine
+   and this is a display issue, not a connectivity one.
+3. **If it's a genuine reconnect (kernel restart, notebook crash):** the
+   student re-runs Connect and the widget cells. The connection and message
+   flow resume correctly (same board ID/MAC), but their board's own memory
+   of previously-revealed cards is gone — a fresh kernel starts with an
+   empty `board_memory`. They'll only know about cards revealed *after*
+   reconnecting; this is a real, uncompensated disadvantage, not something
+   the referee can restore for them.
+4. **Resume once they're back**, and let the match continue.
+5. **If it can't be recovered in a reasonable time**, decide between:
+   - **Stop** — if the disconnect happened early enough that a full replay
+     is fair and there's time for one.
+   - **Finish** — if the match is well underway and time is short; credits
+     whoever's currently ahead, treating the outage as that team's problem
+     to have solved faster. Use judgment on fairness given how the score
+     looked right before the disconnect.
 
 ## Step 7 — Paid hints (if a team asks about them)
 
