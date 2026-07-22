@@ -80,7 +80,11 @@ independently of pair count.
 
 ## 4. Setup — The Pre-Game Window
 
-Two things happen here, in order, before the match clock starts:
+Nothing in this window starts until **both teams for that match have
+connected** — the referee sends nothing timed while it's still just
+waiting for one or both boards to show up (your match's schedule slot can
+exist long before you're actually at the table). Once both are in, two
+things happen here, in order, before the match clock starts:
 
 1. **The riddle race** (decides who goes first). The referee sends both
    teams the identical hard riddle (`pregame_riddle`) with a single-word
@@ -91,10 +95,10 @@ Two things happen here, in order, before the match clock starts:
    operator decides (a coin flip, typically).
 2. **The free hint** (shared, not competitive). Right after, both teams
    receive an identical hint — a riddle describing one real object on the
-   grid and its rough quadrant, split into several QR-coded fragments
-   (`free_hint_fragment`) you assemble yourself, the same as scanning
-   printed cards with your camera. You get **60 seconds** for this stage.
-   It doesn't affect turn order; it's free intel for both teams equally.
+   grid and its rough quadrant, delivered as several plain-text fragments
+   (`free_hint_fragment`) you assemble yourself in order. You get **60
+   seconds** for this stage. It doesn't affect turn order; it's free intel
+   for both teams equally.
 
 The match itself begins with a `game_start` message naming both teams in
 turn order (whoever won the riddle race goes first).
@@ -195,7 +199,8 @@ reasons).
 ### Free hints (pre-game, shared)
 
 See [Section 4](#4-setup--the-pre-game-window) above — one shared hint per
-match, delivered as assembled QR fragments, no cost, not competitive.
+match, delivered as plain-text fragments you assemble in order, no cost,
+not competitive.
 
 ## 8. Tournament Format
 
@@ -287,7 +292,7 @@ This is the "who does what" map for teams building a GridMind player.
 | **Position-choice strategy** — which two cells to flip each turn | This is the actual game — the referee has no opinion on strategy | Balancing "flip a guaranteed pair from memory" vs. "explore an unknown cell" as the board fills in |
 | **Turn loop / state machine** | The referee tells you whose turn it is; it doesn't run your loop for you | Concurrency: you're polling for messages *and* possibly mid-detection *and* possibly mid-turn-timeout, all at once |
 | **Pre-game riddle solving** — a single-word answer fast enough to call out first | The referee generates and delivers the riddle text; it does not hand you the answer or judge it automatically | Genuinely hard riddles, not simple ones — this is meant to be a real LLM call, and speed matters since it's a race |
-| **Free-hint QR assembly** — decoding each `free_hint_fragment`'s QR image and concatenating them in order | The referee delivers raw QR-encoded fragments; it does not assemble or interpret them for you | Handling fragments arriving out of order |
+| **Free-hint assembly** — concatenating each `free_hint_fragment`'s text in order | The referee delivers unordered fragments (by `index`); it does not assemble them for you | Handling fragments arriving out of order |
 | **Paid-hint digit reading** — turning two base64 PNG digit images into a row/column guess | The referee renders the images; it does not hand you the row/column as data | A proper solution reads them programmatically rather than eyeballing every time |
 | **MAC self-discovery** (only if using `join_competition`) | `pynqp2p.get_id()` gives you your own MAC; wiring it in is a couple of lines, but it's still your notebook's code | Optional — skip it and the operator just types your MAC in manually, no penalty |
 
@@ -326,7 +331,7 @@ Arena Agent.
 | Type | Fields | Meaning |
 |---|---|---|
 | `pregame_riddle` | `riddle` | Pre-game, both teams identically — decides who goes first (judged manually, no answer message exists) |
-| `free_hint_fragment` | `index, total, qr_png_base64` | Pre-game, both teams identically — assemble every fragment yourself |
+| `free_hint_fragment` | `index, total, text` | Pre-game, both teams identically — assemble every fragment yourself (plain text, no decoding needed) |
 | `game_start` | `teams, total_pairs, robot_id, genesis_team_id?, genesis_url?` | Match beginning; `teams` lists both names in turn order. The three `genesis_*`-adjacent fields are only meaningful when Genesis is configured for this arena — see Section 10. |
 | `your_turn` | `flip_num` | It's your turn |
 | `wait` | `active_team` | Not your turn — but still watch for `card_revealed` |
@@ -690,9 +695,8 @@ def wait_for_hint_response(client, timeout=5.0):
 **Unblocks:** "we don't know how to catch the pre-game riddle or free hint
 messages."
 
-**Does NOT solve:** solving the riddle itself (LLM call, your side) or
-decoding the QR images (Module B-style vision work, your side). This module
-only shows how to catch and assemble the messages.
+**Does NOT solve:** solving the riddle itself (LLM call, your side). This
+module only shows how to catch and assemble the messages.
 
 ```python
 def wait_for_pregame_riddle(client, timeout=125):
@@ -716,7 +720,7 @@ def collect_free_hint_fragments(client, timeout=65):
     while time.time() < deadline:
         for msg in client.poll():
             if msg['type'] == 'free_hint_fragment':
-                fragments[msg['index']] = msg['qr_png_base64']  # decode this QR yourself
+                fragments[msg['index']] = msg['text']
                 total = msg['total']
                 if total is not None and len(fragments) == total:
                     return fragments
@@ -757,7 +761,7 @@ join_competition(client, MASTER_ID, TEAM_SECRET)
 | Streak | Consecutive correct matches within the same turn |
 | Response-time tier | The speed-based scoring bonus/penalty described in [Section 6](#6-scoring) |
 | Puzzle race | The pre-game riddle that decides turn order |
-| Free hint | The shared, non-competitive pre-game QR hint |
+| Free hint | The shared, non-competitive pre-game text hint |
 | Paid hint | The mid-match, per-team, point-costing hint |
 | `pynqp2p` | The board-to-board messaging library all wire traffic goes through |
 | Genesis | The optional, purely cosmetic simulated robot arm layer |
