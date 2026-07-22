@@ -793,6 +793,12 @@ always reports truthfully). Ask an RC Team member to set one up for you
 if you want to test before your first real match; it never affects
 tournament standings either way.
 
+**Q: We never received the pre-game riddle or free hint — what happened?**
+Nothing is sent until **both** teams for your match have connected — check
+you've actually clicked Connect (and so has your opponent). If you're both
+connected and it still hasn't shown up, tell the operator: they have a
+Resend/Restart control for exactly this.
+
 **Q: Where do we ask if something in this doc seems wrong?**
 Flag it to the RC Team directly — don't guess, and don't trust an older
 planning doc, slide, or Confluence page over this one.
