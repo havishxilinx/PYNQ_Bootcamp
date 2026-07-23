@@ -704,59 +704,70 @@ class GenesisSimulation:
 
         discard_z = cover_z
 
-        # === APPROACH (faster travel) ===
-        self.move_robot_smooth(robot_id, [cover_x, cover_y, hover_z], num_waypoints=100)
-        self.step(30)
-        self.gripper(robot_id, "open")
-        self.step(30)
-
-        # === DESCEND STRAIGHT DOWN ===
-        self.move_robot(robot_id, [cover_x, cover_y, grab_z])
-        self.step(75)
-
-        # === GRASP (hold + close). Keep enough settle for a firm grip. ===
-        self.move_robot(robot_id, [cover_x, cover_y, grab_z])  # re-assert hold
-        self.gripper(robot_id, "close")
-        self.step(90)
-
-        # Release only the target cover so it can be lifted.
-        self.unpin_cover(card["cover"])
-
-        # === LIFT STRAIGHT UP ===
-        #self.move_robot(robot_id, [cover_x, cover_y, lift_z])
-        #self.step(40)
-        self.move_robot(robot_id, [cover_x, cover_y, safe_z])
-        self.step(10)
-
-            # === TELEPORT the cover from the gripper to the discard pile ===
-        # Open the gripper first so the fingers release, then snap the cover to the
-        # discard pile and let it settle there. No transport/place motion needed.
-        #self.gripper(robot_id, "open")
-        #self.step(20)
-
-        cover_entity.set_pos(np.array([discard_x, discard_y, discard_z]))
-        cover_entity.set_quat(np.array([1.0, 0.0, 0.0, 0.0]))
+        # Everything below moves the arm through a multi-second choreography
+        # (approach/descend/grasp/lift/teleport). If any step raises partway
+        # through -- an IK solve failing, a transient physics error -- the arm
+        # would otherwise be abandoned mid-motion in whatever contorted pose
+        # it was last commanded to. The NEXT competition action (either
+        # team's next turn) unconditionally calls freeze_robot() on the idle
+        # robot, which snapshots and re-asserts its CURRENT qpos every sim
+        # step -- so a robot left mid-motion here gets permanently locked
+        # into that broken pose for the rest of the match. The try/finally
+        # guarantees the arm is always dropped and sent home first.
         try:
-            cover_entity.zero_all_dofs_velocity()
-        except AttributeError:
-            pass
+            # === APPROACH (faster travel) ===
+            self.move_robot_smooth(robot_id, [cover_x, cover_y, hover_z], num_waypoints=100)
+            self.step(30)
+            self.gripper(robot_id, "open")
+            self.step(30)
 
-        # Briefly pin the cover at the pile so it doesn't get nudged while the
-        # sim settles, then release it to normal physics.
-        self.pin_cover(cover_entity)
-        self.step(20)
-        self.unpin_cover(cover_entity)
+            # === DESCEND STRAIGHT DOWN ===
+            self.move_robot(robot_id, [cover_x, cover_y, grab_z])
+            self.step(75)
 
+            # === GRASP (hold + close). Keep enough settle for a firm grip. ===
+            self.move_robot(robot_id, [cover_x, cover_y, grab_z])  # re-assert hold
+            self.gripper(robot_id, "close")
+            self.step(90)
 
+            # Release only the target cover so it can be lifted.
+            self.unpin_cover(card["cover"])
 
+            # === LIFT STRAIGHT UP ===
+            #self.move_robot(robot_id, [cover_x, cover_y, lift_z])
+            #self.step(40)
+            self.move_robot(robot_id, [cover_x, cover_y, safe_z])
+            self.step(10)
 
-        # === RETURN HOME ===
-        self.reset_to_home(robot_id)
+                # === TELEPORT the cover from the gripper to the discard pile ===
+            # Open the gripper first so the fingers release, then snap the cover to the
+            # discard pile and let it settle there. No transport/place motion needed.
+            #self.gripper(robot_id, "open")
+            #self.step(20)
 
-        # Release all pinned covers.
-        self.unpin_all_covers()
+            cover_entity.set_pos(np.array([discard_x, discard_y, discard_z]))
+            cover_entity.set_quat(np.array([1.0, 0.0, 0.0, 0.0]))
+            try:
+                cover_entity.zero_all_dofs_velocity()
+            except AttributeError:
+                pass
 
-        card["flipped"] = True
+            # Briefly pin the cover at the pile so it doesn't get nudged while the
+            # sim settles, then release it to normal physics.
+            self.pin_cover(cover_entity)
+            self.step(20)
+            self.unpin_cover(cover_entity)
+
+            card["flipped"] = True
+        finally:
+            # Always drop whatever's held and return the arm home, even on
+            # failure above, so a single bad flip can't strand the robot.
+            try:
+                self.gripper(robot_id, "open")
+            except Exception as exc:
+                print(f"Warning: failed to open gripper during flip_card cleanup: {exc!r}")
+            self.reset_to_home(robot_id)
+            self.unpin_all_covers()
 
         return {
             "color_idx": card["color_idx"],
