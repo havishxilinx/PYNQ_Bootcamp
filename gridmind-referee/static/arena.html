@@ -20,13 +20,20 @@
   .riddle-text { font-size: 20px; font-weight: 600; text-align: center; padding: 10px 0 16px; }
   .flip-banner { background: #3a2e00; border: 2px solid #ffcc00; color: #ffdd55; padding: 10px 14px; font-size: 20px; font-weight: 800; text-align: center; letter-spacing: 0.5px; margin-bottom: 10px; border-radius: 6px; }
   .idle { text-align: center; opacity: 0.6; padding: 40px; font-size: 20px; }
-  .video-zone { display: none; margin-top: 14px; border: 2px solid #ED1C24; border-radius: 8px; overflow: hidden; background: #000; }
+  .video-zone { display: none; position: relative; margin-top: 14px; border: 2px solid #ED1C24; border-radius: 8px; overflow: hidden; background: #000; }
   .video-zone img { display: block; width: 100%; height: auto; }
+  .video-label { position: absolute; top: 8px; padding: 4px 10px; font-size: 14px; font-weight: 700; border-radius: 4px; background: rgba(13,17,23,0.75); }
+  .video-label-red { left: 8px; color: #ff6b6b; border: 1px solid #ED1C24; }
+  .video-label-blue { right: 8px; color: #6ba8ff; border: 1px solid #1c6ded; }
 </style>
 </head>
 <body>
 <div id="root">connecting...</div>
-<div id="video-zone" class="video-zone"><img id="video-stream" alt="Live simulation view"></div>
+<div id="video-zone" class="video-zone">
+  <img id="video-stream" alt="Live simulation view">
+  <div id="video-label-red" class="video-label video-label-red"></div>
+  <div id="video-label-blue" class="video-label video-label-blue"></div>
+</div>
 
 <script>
 const root = document.getElementById('root');
@@ -233,9 +240,18 @@ function renderPregameStrip(pregame) {
 // degrades to simply not showing video, not a broken-image icon.
 const videoZone = document.getElementById('video-zone');
 const videoImg = document.getElementById('video-stream');
+const videoLabelRed = document.getElementById('video-label-red');
+const videoLabelBlue = document.getElementById('video-label-blue');
 videoImg.onerror = () => { videoZone.style.display = 'none'; };
 
-function updateVideoZone(streamUrl) {
+// Genesis only knows its two robots as "team_red"/"team_blue" (robot 0/1),
+// which has no fixed relationship to team_a/team_b -- those are just the
+// two team names sorted alphabetically (see `team_names_from_scores` in
+// master.rs). The puzzle-race winner always goes first and is seated at
+// the red robot (see `arena.rs`'s team ordering before GameStart), so
+// `puzzle_winner` is what tells us which real team name is red vs blue.
+function updateVideoZone(arena) {
+  const streamUrl = arena ? arena.genesis_stream_url : null;
   if (!streamUrl) {
     videoZone.style.display = 'none';
     videoImg.removeAttribute('src');
@@ -245,6 +261,13 @@ function updateVideoZone(streamUrl) {
     videoImg.src = streamUrl;
   }
   videoZone.style.display = 'block';
+
+  const redName = arena.puzzle_winner
+    || arena.team_a || 'Red';
+  const blueName = (arena.puzzle_winner === arena.team_a ? arena.team_b : arena.team_a)
+    || 'Blue';
+  videoLabelRed.textContent = redName;
+  videoLabelBlue.textContent = blueName;
 }
 
 function render(state) {
@@ -268,7 +291,7 @@ function render(state) {
     idleMessage = `Tournament phase: ${esc(state.phase)}`;
   }
 
-  updateVideoZone(arena ? arena.genesis_stream_url : null);
+  updateVideoZone(arena);
 
   if (pregame) {
     root.innerHTML = `<div class="strip">${renderPregameStrip(pregame)}</div>`;
