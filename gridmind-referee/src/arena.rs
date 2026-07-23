@@ -257,6 +257,7 @@ fn run_one_match(
             now: Instant::now(),
             puzzle_winner: &assignment.first_turn_team,
             genesis_stream_url: genesis_stream_url.clone(),
+            genesis_configured: genesis.is_some(),
         },
     )?;
 
@@ -320,6 +321,7 @@ fn run_one_match(
                         now: Instant::now(),
                         puzzle_winner: &assignment.first_turn_team,
                         genesis_stream_url: genesis_stream_url.clone(),
+                        genesis_configured: genesis.is_some(),
                     },
                 )?;
                 continue;
@@ -370,6 +372,7 @@ fn run_one_match(
                     now: Instant::now(),
                     puzzle_winner: &assignment.first_turn_team,
                     genesis_stream_url: genesis_stream_url.clone(),
+                    genesis_configured: genesis.is_some(),
                 },
             )?;
         }
@@ -404,6 +407,7 @@ fn run_one_match(
                         now: Instant::now(),
                         puzzle_winner: &assignment.first_turn_team,
                         genesis_stream_url: genesis_stream_url.clone(),
+                        genesis_configured: genesis.is_some(),
                     },
                 )?;
             }
@@ -443,6 +447,11 @@ struct MatchReport<'a> {
     now: Instant,
     puzzle_winner: &'a str,
     genesis_stream_url: Option<String>,
+    /// Whether Genesis is configured for this match at all (`genesis.is_some()`
+    /// after the practice-match override) -- fixed for the whole match,
+    /// unlike `genesis_stream_url` which can briefly lag behind while
+    /// `admin_start_competition` is still starting up.
+    genesis_configured: bool,
 }
 
 fn report_to_master(client: &P2pClient, master_id: &str, report: MatchReport) -> Result<()> {
@@ -457,6 +466,7 @@ fn report_to_master(client: &P2pClient, master_id: &str, report: MatchReport) ->
         active_team: report.state.active_team().to_string(),
         turn_seconds_remaining: report.state.turn_seconds_remaining(report.now),
         genesis_stream_url: report.genesis_stream_url,
+        genesis_configured: report.genesis_configured,
         streak: report
             .state
             .scores()

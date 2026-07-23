@@ -1296,6 +1296,7 @@ mod tests {
             is_paused: false,
             flip_pending_positions: None,
             genesis_stream_url: None,
+            genesis_configured: false,
         }
     }
 }

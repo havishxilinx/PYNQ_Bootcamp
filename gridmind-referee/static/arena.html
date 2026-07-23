@@ -25,6 +25,31 @@
   .video-label { position: absolute; top: 8px; padding: 4px 10px; font-size: 14px; font-weight: 700; border-radius: 4px; background: rgba(13,17,23,0.75); }
   .video-label-red { left: 8px; color: #ff6b6b; border: 1px solid #ED1C24; }
   .video-label-blue { right: 8px; color: #6ba8ff; border: 1px solid #1c6ded; }
+
+  /* Rich (no-Genesis) layout -- same look as the master scoreboard's own
+     arena panel + standings, reused verbatim here since there's no video
+     to reserve space for on this arena. */
+  .hints { font-size: 14px; opacity: 0.8; margin-bottom: 12px; }
+  .match-elapsed { font-size: 13px; opacity: 0.6; margin-bottom: 8px; }
+  .grid { display: grid; gap: 4px; margin: 12px 0; }
+  .cell { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 11px; text-align: center; padding: 2px; overflow: hidden; }
+  .cell.unmatched { background: #21262d; color: #6e7681; }
+  .cell.matched { background: rgba(237,28,36,0.16); border: 1px solid rgba(237,28,36,0.35); color: #ff9297; font-weight: bold; }
+  .standings-table table { border-collapse: collapse; }
+  .standings-table th, .standings-table td { padding: 4px 12px; text-align: left; font-size: 14px; }
+  .standings-table th { color: #8b949e; border-bottom: 1px solid #30363d; }
+  .standings-table h4 { margin-bottom: 6px; }
+  .schedule-strip { margin-top: 4px; }
+  .schedule-strip h4 { margin-bottom: 6px; color: #8b949e; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
+  .schedule-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
+  .schedule-row:last-child { border-bottom: none; }
+  .schedule-matchup { color: #e6edf3; }
+  .schedule-status { font-size: 12px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+  .schedule-status.locked { background: #21262d; color: #6e7681; }
+  .schedule-status.ready { background: #1c2a1c; color: #3fb950; }
+  .schedule-status.live { background: #1c2a3a; color: #58a6ff; }
+  .schedule-status.complete { background: #21262d; color: #a8b5c1; }
+  .standings-and-schedule { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; margin-top: 24px; padding: 0 24px 24px; }
 </style>
 </head>
 <body>
@@ -190,6 +215,127 @@ function renderStrip(arena) {
     <div>${arena.pairs_found}/${arena.total_pairs} pairs found</div>`;
 }
 
+// Position labels look like "A1".."E6" -- letter is the row, number is
+// the column. Only matched cells ever show an object name; unmatched
+// cells always show "?" so this view can't leak the golden answer key
+// beyond what's already visible in-person. Same rendering as the master
+// scoreboard's own grid.
+function renderGrid(arena) {
+  if (!arena.all_positions.length) return '';
+  let maxRow = 0;
+  let maxCol = 0;
+  const cells = arena.all_positions.map((pos) => {
+    const row = pos.charCodeAt(0) - 64;
+    const col = parseInt(pos.slice(1), 10);
+    maxRow = Math.max(maxRow, row);
+    maxCol = Math.max(maxCol, col);
+    const obj = arena.matched[pos];
+    const cls = obj ? 'cell matched' : 'cell unmatched';
+    const label = obj ? esc(obj) : '?';
+    return { row, col, cls, label };
+  }).map(({ row, col, cls, label }) =>
+    `<div class="${cls}" style="grid-row:${row};grid-column:${col};">${label}</div>`
+  ).join('');
+  return `<div class="grid" style="grid-template-columns: repeat(${maxCol}, 1fr); grid-template-rows: repeat(${maxRow}, 1fr);">${cells}</div>`;
+}
+
+// The fuller view used whenever this arena has no Genesis video to show --
+// same content as the master scoreboard's own arena panel (hint icons,
+// match-elapsed timer, the card grid) instead of the compact strip, since
+// there's no video to leave room for.
+function renderRichStrip(arena) {
+  turnDeadlineMs = Date.now() + arena.turn_seconds_remaining * 1000;
+  activeView = 'turn';
+
+  const teams = [arena.team_a, arena.team_b];
+  const rows = teams.map((team) => {
+    const isActive = team === arena.active_team;
+    const streak = arena.streak[team] || 0;
+    const hints = arena.hints_used[team] || 0;
+    const hintIcons = '\u{1F50D}'.repeat(hints) + '○'.repeat(Math.max(0, 2 - hints));
+    return `<div class="team-row ${isActive ? 'active' : ''}">
+      <span>${isActive ? '<span class="dot"></span>' : ''}${esc(team)}${streak > 0 ? `<span class="streak">🔥x${streak}</span>` : ''}</span>
+      <span class="score">${arena.scores[team] ?? 0}</span>
+    </div>
+    <div class="hints">${hintIcons}</div>`;
+  }).join('');
+
+  const secs = localSecsRemaining();
+  const pct = Math.max(0, Math.min(100, (secs / TURN_TIMEOUT_SECS) * 100));
+  const tier = tierInfo(secs);
+  const puzzleBanner = arena.puzzle_winner
+    ? `<div class="puzzle-banner">🧩 ${esc(arena.puzzle_winner)} solved the whole-board puzzle first — chose to go first</div>`
+    : '';
+  const flipBanner = Array.isArray(arena.flip_pending_positions)
+    ? `<div class="flip-banner">🃏 FLIP CARDS AT ${esc(arena.flip_pending_positions[0])} AND ${esc(arena.flip_pending_positions[1])} NOW</div>`
+    : '';
+
+  return `${flipBanner}${puzzleBanner}
+    <div class="match-elapsed" data-match-start="${arena.match_started_at_unix_ms}">0:00 elapsed</div>
+    ${rows}
+    <div class="timer-bar"><div id="timer-fill" class="timer-fill" style="width:${pct}%;background-color:${tier.color}"></div></div>
+    <div class="tier-row">
+      <span id="timer-label" style="opacity:0.7">${secs}s remaining</span>
+      <span id="tier-label" style="color:${tier.color}">${tier.label}</span>
+      <span id="tier-bonus" class="tier-bonus" style="color:${tier.color}">${tier.bonus}</span>
+    </div>
+    <div>${arena.pairs_found}/${arena.total_pairs} pairs found</div>
+    ${renderGrid(arena)}`;
+}
+
+function renderStandingsTable(title, standings) {
+  if (!standings || !standings.length) return '';
+  const rows = standings.map((s) =>
+    `<tr><td>${esc(s.team)}</td><td>${s.wins}</td><td>${s.losses}</td><td>${s.pairs_matched}</td></tr>`
+  ).join('');
+  return `<div class="standings-table">
+    <h4>${esc(title)}</h4>
+    <table><thead><tr><th>Team</th><th>W</th><th>L</th><th>Pairs</th></tr></thead><tbody>${rows}</tbody></table>
+  </div>`;
+}
+
+function renderScheduleStrip(title, schedule) {
+  if (!schedule || !schedule.length) return '';
+  const rows = schedule.map((entry) => {
+    let statusLabel;
+    if (entry.status === 'complete') {
+      statusLabel = `complete · ${esc(entry.winner || '')} won`;
+    } else {
+      statusLabel = esc(entry.status);
+    }
+    return `<div class="schedule-row">
+      <span class="schedule-matchup">${esc(entry.team_a)} vs ${esc(entry.team_b)}</span>
+      <span class="schedule-status ${esc(entry.status)}">${statusLabel}</span>
+    </div>`;
+  }).join('');
+  return `<div class="schedule-strip">
+    <h4>${esc(title)}</h4>
+    ${rows}
+  </div>`;
+}
+
+function renderStandingsAndSchedule(state) {
+  return `<div class="standings-and-schedule">
+    ${renderStandingsTable('Pool 1 Standings', state.pool1_standings)}
+    ${renderScheduleStrip('Pool 1 Schedule', state.pool1_schedule)}
+    ${renderStandingsTable('Pool 2 Standings', state.pool2_standings)}
+    ${renderScheduleStrip('Pool 2 Schedule', state.pool2_schedule)}
+  </div>`;
+}
+
+function updateMatchElapsedTimers() {
+  const now = Date.now();
+  document.querySelectorAll('[data-match-start]').forEach((el) => {
+    const start = parseInt(el.dataset.matchStart, 10);
+    const secondsElapsed = Math.max(0, Math.round((now - start) / 1000));
+    const minutes = Math.floor(secondsElapsed / 60);
+    const seconds = String(secondsElapsed % 60).padStart(2, '0');
+    el.textContent = `${minutes}:${seconds} elapsed`;
+  });
+}
+
+setInterval(updateMatchElapsedTimers, 1000);
+
 function renderPregameStrip(pregame) {
   if (pregame.stage === 'waiting_for_teams') {
     // No deadline yet -- nothing timed has started. Registration (and the
@@ -302,7 +448,16 @@ function render(state) {
     return;
   }
   if (arena) {
-    root.innerHTML = `<div class="strip">${renderStrip(arena)}</div>`;
+    // Genesis configured -> keep the existing compact strip, which leaves
+    // room for the video zone below it. No Genesis for this arena at all
+    // -> there's nothing to reserve that space for, so show the fuller
+    // master-scoreboard-style view (hint icons, card grid, pool standings)
+    // instead of just leaving the extra screen blank.
+    if (arena.genesis_configured) {
+      root.innerHTML = `<div class="strip">${renderStrip(arena)}</div>`;
+    } else {
+      root.innerHTML = `<div class="strip">${renderRichStrip(arena)}</div>${renderStandingsAndSchedule(state)}`;
+    }
     return;
   }
   activeView = null;

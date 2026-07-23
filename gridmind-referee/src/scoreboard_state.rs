@@ -43,6 +43,13 @@ pub struct LiveArenaState {
     /// to embed directly -- `None` whenever there's nothing to show
     /// (Genesis unconfigured, practice match, or an older Genesis server).
     pub genesis_stream_url: Option<String>,
+    /// Whether Genesis is configured for this match at all -- fixed for
+    /// the whole match, unlike `genesis_stream_url` which can start as
+    /// `None` and only becomes `Some` once `admin_start_competition`
+    /// actually succeeds. The arena UI uses this to decide its layout
+    /// (compact, room reserved for video vs a fuller standalone view)
+    /// without that decision flickering while Genesis is still starting up.
+    pub genesis_configured: bool,
 }
 
 /// A pool's roster and round-robin schedule size, shown in the Idle
@@ -248,6 +255,7 @@ mod tests {
             is_paused: false,
             flip_pending_positions: None,
             genesis_stream_url: None,
+            genesis_configured: false,
         }
     }
 

@@ -84,6 +84,16 @@ simulation under a fixed `"competition"` key); against an unpatched
 Genesis server the video feed silently doesn't appear, nothing else is
 affected.
 
+**The arena UI's layout depends on whether `--genesis-url` was passed at
+all** (not on whether the video is actually showing right now): with
+Genesis configured, it stays the compact strip you're used to, leaving
+room for the video below. Without `--genesis-url` for that arena, there's
+no video to reserve space for, so the arena page instead shows the same
+fuller view as the master scoreboard — hint icons, the match-elapsed
+timer, the live card grid, and both pools' standings/schedule underneath.
+This is decided once per match, not per frame, so a Genesis server that's
+just slow to start doesn't cause the layout to jump around mid-match.
+
 Each arena is silent until a match is actually assigned to it — that's normal,
 not a hang. Arenas run independently (each has its own assignment thread), so
 one arena's popup sitting open doesn't freeze the other.

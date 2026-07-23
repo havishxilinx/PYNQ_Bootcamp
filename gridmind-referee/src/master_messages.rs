@@ -39,6 +39,15 @@ pub enum ArenaToMaster {
         /// field still parse.
         #[serde(default)]
         genesis_stream_url: Option<String>,
+        /// Whether Genesis is configured for this match at all (a
+        /// `--genesis-url` was passed and this isn't a practice match) --
+        /// unlike `genesis_stream_url`, this is fixed for the whole match
+        /// and doesn't flicker if `admin_start_competition` is briefly slow
+        /// or fails. The arena UI uses this (not the stream URL) to decide
+        /// whether to reserve screen space for video at all, so a slow
+        /// Genesis start doesn't cause the layout to jump around.
+        #[serde(default)]
+        genesis_configured: bool,
     },
     #[serde(rename = "match_result")]
     MatchResult {
@@ -231,6 +240,41 @@ mod tests {
                     genesis_stream_url,
                     Some("http://127.0.0.1:8080/stream/competition".to_string())
                 );
+            }
+            other => panic!("expected ScoreUpdate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn score_update_defaults_genesis_configured_to_false_when_absent() {
+        let json = r#"{"type":"score_update","arena":1,"pool":1,"scores":{"alpha":5,"beta":3},"pairs_found":7,"total_pairs":15,"matched":{"A1":"dog"},"all_positions":["A1","A2"],"active_team":"alpha","turn_seconds_remaining":37,"streak":{"alpha":2,"beta":0},"hints_used":{"alpha":0,"beta":1},"puzzle_winner":"alpha","match_started_at_unix_ms":1784000000000,"is_paused":false}"#;
+        let msg: ArenaToMaster = serde_json::from_str(json).unwrap();
+        match msg {
+            ArenaToMaster::ScoreUpdate {
+                genesis_configured, ..
+            } => {
+                assert!(!genesis_configured);
+            }
+            other => panic!("expected ScoreUpdate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn score_update_genesis_configured_can_be_true_while_stream_url_is_still_none() {
+        // Genesis can be configured for this match (a --genesis-url was
+        // passed, it's not a practice match) while admin_start_competition
+        // hasn't succeeded yet -- genesis_configured must stay true so the
+        // arena UI's layout doesn't flicker, independent of the stream URL.
+        let json = r#"{"type":"score_update","arena":1,"pool":1,"scores":{"alpha":5,"beta":3},"pairs_found":7,"total_pairs":15,"matched":{"A1":"dog"},"all_positions":["A1","A2"],"active_team":"alpha","turn_seconds_remaining":37,"streak":{"alpha":2,"beta":0},"hints_used":{"alpha":0,"beta":1},"puzzle_winner":"alpha","match_started_at_unix_ms":1784000000000,"is_paused":false,"genesis_configured":true}"#;
+        let msg: ArenaToMaster = serde_json::from_str(json).unwrap();
+        match msg {
+            ArenaToMaster::ScoreUpdate {
+                genesis_stream_url,
+                genesis_configured,
+                ..
+            } => {
+                assert!(genesis_configured);
+                assert_eq!(genesis_stream_url, None);
             }
             other => panic!("expected ScoreUpdate, got {other:?}"),
         }
