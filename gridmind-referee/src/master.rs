@@ -71,6 +71,12 @@ pub struct Tournament {
     grand_final: GrandFinalState,
     champion: Option<String>,
     used_pregame_riddles: std::collections::HashSet<String>,
+    /// Fallback grid for the Grand Final when neither pool's schedule has
+    /// an entry to borrow one from (see `next_action`'s Grand Final
+    /// branch) -- e.g. the two-team dry-run mode below, where both pools
+    /// end up with exactly one team and therefore zero scheduled matches.
+    /// Always a real grid, never the tiny `example_grid.json` dev fixture.
+    default_grid_id: String,
 }
 
 impl Tournament {
@@ -112,18 +118,23 @@ impl Tournament {
             grand_final: GrandFinalState::NotReady,
             champion: None,
             used_pregame_riddles: std::collections::HashSet::new(),
+            default_grid_id: grid_id.to_string(),
         }
     }
 
     /// Builds a `Tournament` from already-built schedules (e.g. ones with
     /// per-match grid assignments from `build_schedule_entries_with_grids`,
     /// or ones loaded back from a saved tournament state) instead of
-    /// building fresh ones internally the way `new` does.
+    /// building fresh ones internally the way `new` does. `default_grid_id`
+    /// is the Grand Final's last-resort fallback (see the `Tournament`
+    /// struct doc) -- callers pass something from the same grid pool these
+    /// schedules were built from, so it's always a real grid.
     pub fn from_schedules(
         pool1_teams: Vec<String>,
         pool2_teams: Vec<String>,
         pool1_schedule: Vec<ScheduleEntry>,
         pool2_schedule: Vec<ScheduleEntry>,
+        default_grid_id: String,
     ) -> Self {
         Tournament {
             pool1_standings: PoolStandings::new(pool1_teams),
@@ -133,6 +144,7 @@ impl Tournament {
             grand_final: GrandFinalState::NotReady,
             champion: None,
             used_pregame_riddles: std::collections::HashSet::new(),
+            default_grid_id,
         }
     }
 
@@ -264,12 +276,18 @@ impl Tournament {
             // pre-assigned grid (it's decided dynamically once both pools
             // finish) -- reuse pool 1's first match's grid rather than
             // threading a whole separate grid-pool reference through
-            // `Tournament` for this one late assignment.
+            // `Tournament` for this one late assignment. Both schedules can
+            // be empty at once -- e.g. the two-team dry-run mode above,
+            // where each pool ends up with exactly one team and therefore
+            // zero scheduled matches -- so fall back to pool 2, then to
+            // `default_grid_id` (always a real grid; see the struct doc)
+            // rather than a hardcoded dev fixture.
             let grand_final_grid_id = self
                 .pool1_schedule
                 .first()
+                .or_else(|| self.pool2_schedule.first())
                 .map(|e| e.grid_id.clone())
-                .unwrap_or_else(|| "example_grid.json".to_string());
+                .unwrap_or_else(|| self.default_grid_id.clone());
             return match std::mem::replace(&mut self.grand_final, GrandFinalState::Assigned) {
                 GrandFinalState::Ready(matchup) => NextAction::AssignGrandFinal {
                     arena,
@@ -720,6 +738,10 @@ pub fn run_master(
                         pool2_names,
                         state.pool1_schedule.unwrap_or_default(),
                         state.pool2_schedule.unwrap_or_default(),
+                        grid_pool
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "data/grids/grid_1.json".to_string()),
                     )
                 }
                 // A partial (not-yet-closed) save is replayed back into
@@ -1245,7 +1267,16 @@ fn run_registration_phase(
     )?;
 
     Ok((
-        Tournament::from_schedules(pool1_names, pool2_names, pool1_schedule, pool2_schedule),
+        Tournament::from_schedules(
+            pool1_names,
+            pool2_names,
+            pool1_schedule,
+            pool2_schedule,
+            grid_pool
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "data/grids/grid_1.json".to_string()),
+        ),
         std::collections::HashMap::new(),
         String::new(),
     ))
@@ -2852,6 +2883,27 @@ mod tests {
                         team_b: "beta".into()
                     }
                 );
+            }
+            other => panic!("expected AssignGrandFinal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn two_total_teams_dry_run_uses_the_configured_grid_not_the_hardcoded_dev_fixture() {
+        // Both pools end up with exactly one team (see the two-team
+        // shortcut in `Tournament::new`), so neither has any scheduled
+        // matches to borrow a grid_id from -- this exercises the Grand
+        // Final's fallback chain all the way down to `default_grid_id`.
+        // Previously this fell back to a hardcoded "example_grid.json"
+        // regardless of what was actually configured.
+        let mut tournament = Tournament::new(
+            names(&["alpha"]),
+            names(&["beta"]),
+            "data/grids/grid_7.json",
+        );
+        match tournament.next_action(1) {
+            NextAction::AssignGrandFinal { grid_id, .. } => {
+                assert_eq!(grid_id, "data/grids/grid_7.json");
             }
             other => panic!("expected AssignGrandFinal, got {other:?}"),
         }

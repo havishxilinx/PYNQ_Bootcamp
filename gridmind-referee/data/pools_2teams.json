@@ -1,0 +1,5 @@
+{
+  "pool1_teams": [["red", "aa:00:00:00:00:01"], ["blue", "aa:00:00:00:00:02"]],
+  "pool2_teams": [],
+  "grid_id": "data/grids/grid_1.json"
+}
