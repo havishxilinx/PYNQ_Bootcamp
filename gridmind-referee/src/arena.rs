@@ -294,8 +294,16 @@ fn run_one_match(
                         }
                         return Ok(());
                     }
-                    // Shouldn't arrive mid-match; harmless to ignore if it does.
-                    MasterToArena::AssignMatch { .. } => {}
+                    // Shouldn't arrive mid-match; harmless to ignore if it
+                    // does, but logged (unlike a genuinely no-op case) since
+                    // it likely means the Master thinks this arena is free
+                    // when it isn't -- the Master would then wait forever
+                    // for a result that's never coming for that assignment.
+                    MasterToArena::AssignMatch { .. } => {
+                        eprintln!(
+                            "arena: discarding a new match assignment while one is already in progress -- the Master may be out of sync with this arena's real state"
+                        );
+                    }
                     MasterToArena::AssignPracticeMatch { .. } => {
                         eprintln!(
                             "arena: discarding practice-match request while a match is already in progress"

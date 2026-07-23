@@ -501,6 +501,19 @@ impl GameState {
         if team != active_team {
             return None;
         }
+        // `pos1`/`pos2` must be exactly the two positions this team actually
+        // flipped this turn (in either order) -- without this check a
+        // client could call report_result with two arbitrary grid
+        // positions it never flipped (no card_revealed, no flip_both) and
+        // fish for a lucky match against the real answer key, or replay a
+        // claim against an already-matched pair for extra streak bonus.
+        let flipped_this_turn = matches!(
+            (&self.flip1, &self.flip2),
+            (Some(a), Some(b)) if (a == pos1 && b == pos2) || (a == pos2 && b == pos1)
+        );
+        if !flipped_this_turn {
+            return None;
+        }
 
         let tier_bonus = response_tier_bonus(Instant::now().duration_since(self.turn_start));
 
@@ -640,7 +653,9 @@ impl GameState {
     /// positions. Only ever reasons about positions already in `revealed`
     /// -- the same information a real player has via `card_revealed`
     /// broadcasts, never peeking at the hidden grid ahead of a flip.
-    fn choose_bot_pair(&self) -> (String, String) {
+    /// `None` only if there aren't two distinct positions left to try at
+    /// all -- see the final fallback branch below.
+    fn choose_bot_pair(&self) -> Option<(String, String)> {
         let mut by_class: HashMap<&str, Vec<&str>> = HashMap::new();
         let mut revealed_unmatched: Vec<&str> = Vec::new();
         for pos in &self.revealed {
@@ -661,7 +676,7 @@ impl GameState {
             if positions.len() >= 2 {
                 let mut sorted = positions.clone();
                 sorted.sort();
-                return (sorted[0].to_string(), sorted[1].to_string());
+                return Some((sorted[0].to_string(), sorted[1].to_string()));
             }
         }
 
@@ -675,20 +690,23 @@ impl GameState {
         if let (Some(known_pos), Some(first_unrevealed)) =
             (revealed_unmatched.first(), unrevealed.first())
         {
-            return (known_pos.to_string(), (*first_unrevealed).clone());
+            return Some((known_pos.to_string(), (*first_unrevealed).clone()));
         }
         if unrevealed.len() >= 2 {
-            return (unrevealed[0].clone(), unrevealed[1].clone());
+            return Some((unrevealed[0].clone(), unrevealed[1].clone()));
         }
 
         // Board fully revealed but nothing pairs up (only possible after a
         // wrong claim elsewhere) -- retry two unmatched revealed positions,
-        // same fallback the Python strategies use.
-        let second = revealed_unmatched
+        // same fallback the Python strategies use. Needs at least two
+        // distinct positions to retry; a grid with an odd count of some
+        // class (a content-authoring mistake, not something a bot can fix)
+        // can leave exactly one -- `None` here rather than flipping a
+        // position against itself, which the referee would just reject and
+        // leave the bot retrying the same invalid pair forever.
+        revealed_unmatched
             .get(1)
-            .copied()
-            .unwrap_or(revealed_unmatched[0]);
-        (revealed_unmatched[0].to_string(), second.to_string())
+            .map(|second| (revealed_unmatched[0].to_string(), second.to_string()))
     }
 
     /// Called periodically by the poll loop, alongside `check_timeout`.
@@ -708,7 +726,14 @@ impl GameState {
         }
         match &self.bot_turn {
             None => {
-                let (pos1, pos2) = self.choose_bot_pair();
+                // `None` means a malformed grid left the bot with fewer
+                // than two positions it could possibly try -- nothing to
+                // flip yet; retried every tick until `check_timeout`
+                // forfeits the turn normally rather than getting stuck
+                // retrying an invalid same-position flip forever.
+                let Some((pos1, pos2)) = self.choose_bot_pair() else {
+                    return vec![];
+                };
                 let messages = self.receive_flip_both(BOT_TEAM_NAME, &pos1, &pos2);
                 self.bot_turn = Some(BotTurn {
                     pos1,
@@ -887,6 +912,7 @@ mod tests {
         let mut state = GameState::new(two_teams(), small_grid());
         state.receive_flip("alpha", "A1");
         state.receive_flip("alpha", "A2");
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match");
         assert_eq!(state.flip_pending_positions(), None);
     }
@@ -895,6 +921,7 @@ mod tests {
     fn correct_match_stacks_streak_bonus_with_a_fast_response_tier() {
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 10); // tier +2
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap();
         // streak 1 + tier 2 = 3
         assert_eq!(state.scores().get("alpha"), Some(&3));
@@ -904,6 +931,7 @@ mod tests {
     fn wrong_match_stacks_flat_penalty_with_a_slow_response_tier() {
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 110); // tier -2 (110-20=90s effective)
+        state.receive_flip_both("alpha", "A1", "A3");
         state.receive_result("alpha", "A1", "A3", "match").unwrap(); // wrong match
                                                                      // -1 flat penalty + tier -2 = -3
         assert_eq!(state.scores().get("alpha"), Some(&-3));
@@ -1085,6 +1113,7 @@ mod tests {
         let mut state = GameState::new(two_teams(), small_grid());
         state.receive_flip_both("alpha", "A1", "A2");
         age_turn_start(&mut state, 70);
+        state.receive_flip_both("alpha", "A1", "A2");
         let outcome = state.receive_result("alpha", "A1", "A2", "match").unwrap();
         match outcome {
             ResultOutcome::CorrectMatch { .. } => {}
@@ -1115,6 +1144,7 @@ mod tests {
     fn correct_match_awards_one_point_and_continues_same_team() {
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 70);
+        state.receive_flip_both("alpha", "A1", "A2");
         let outcome = state.receive_result("alpha", "A1", "A2", "match").unwrap();
         match outcome {
             ResultOutcome::CorrectMatch { .. } => {}
@@ -1129,8 +1159,10 @@ mod tests {
     fn second_consecutive_correct_match_awards_two_more_points() {
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 70);
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap(); // +1 -> score 1
         age_turn_start(&mut state, 70);
+        state.receive_flip_both("alpha", "A3", "A4");
         let outcome = state.receive_result("alpha", "A3", "A4", "match").unwrap(); // +2 -> score 3
         match outcome {
             ResultOutcome::GameOver { winner, .. } => assert_eq!(winner, "alpha"),
@@ -1144,15 +1176,18 @@ mod tests {
         // alpha claims A1/A2 (a real match) -> +1, continues.
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 70);
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap();
         // alpha declines to claim A3/A4 -> turn passes to beta with no penalty,
         // A3/A4 remain unmatched.
         age_turn_start(&mut state, 70);
+        state.receive_flip_both("alpha", "A3", "A4");
         state
             .receive_result("alpha", "A3", "A4", "no_match")
             .unwrap();
         // beta claims A3/A4 (a real match) -> +1, all pairs now found, tied 1-1.
         age_turn_start(&mut state, 70);
+        state.receive_flip_both("beta", "A3", "A4");
         let outcome = state.receive_result("beta", "A3", "A4", "match").unwrap();
         match outcome {
             ResultOutcome::GameOver { winner, .. } => {
@@ -1168,11 +1203,48 @@ mod tests {
     }
 
     #[test]
+    fn result_for_positions_never_flipped_this_turn_is_ignored() {
+        // A client must actually flip_both before report_result -- without
+        // this check, the active team could claim a match on two arbitrary
+        // grid positions it never flipped (no card_revealed round-trip at
+        // all) and get scored purely by guessing against the real grid.
+        let mut state = GameState::new(two_teams(), small_grid());
+        let outcome = state.receive_result("alpha", "A1", "A2", "match");
+        assert!(outcome.is_none());
+        assert_eq!(state.scores().get("alpha"), Some(&0));
+        assert_eq!(state.pairs_found(), 0);
+    }
+
+    #[test]
+    fn result_for_a_different_pair_than_what_was_flipped_is_ignored() {
+        let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A2");
+        // A3/A4 is also a real matching pair in small_grid(), but it's not
+        // what this turn actually flipped.
+        let outcome = state.receive_result("alpha", "A3", "A4", "match");
+        assert!(outcome.is_none());
+        assert_eq!(state.scores().get("alpha"), Some(&0));
+    }
+
+    #[test]
+    fn result_reported_in_the_opposite_order_from_flip_both_still_counts() {
+        let mut state = GameState::new(two_teams(), small_grid());
+        age_turn_start(&mut state, 70);
+        state.receive_flip_both("alpha", "A1", "A2");
+        let outcome = state.receive_result("alpha", "A2", "A1", "match").unwrap();
+        match outcome {
+            ResultOutcome::CorrectMatch { .. } => {}
+            other => panic!("expected CorrectMatch, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn result_from_non_active_team_is_ignored() {
         // No age_turn_start needed: the team != active_team guard returns
         // None before response_tier_bonus is ever computed, so this test
         // is unaffected by elapsed time regardless of execution speed.
         let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("beta", "A1", "A2");
         let outcome = state.receive_result("beta", "A1", "A2", "match");
         assert!(outcome.is_none());
         assert_eq!(state.scores().get("beta"), Some(&0));
@@ -1184,6 +1256,7 @@ mod tests {
         age_turn_start(&mut state, 70);
         // A1=dog, A3=cat: genuinely different, but the team claims "match"
         // (e.g. their own model misdetected one of them).
+        state.receive_flip_both("alpha", "A1", "A3");
         let outcome = state.receive_result("alpha", "A1", "A3", "match").unwrap();
         match outcome {
             ResultOutcome::WrongMatch { .. } => {}
@@ -1197,6 +1270,7 @@ mod tests {
     fn no_claim_now_scores_the_response_tier_instead_of_always_zero() {
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 10); // tier +2 -- a fast, correct decline
+        state.receive_flip_both("alpha", "A1", "A3");
         let outcome = state
             .receive_result("alpha", "A1", "A3", "no_match")
             .unwrap();
@@ -1219,6 +1293,7 @@ mod tests {
         // penalty, not silently stay at 0 like the pre-feature behavior.
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 110); // tier -2
+        state.receive_flip_both("alpha", "A1", "A3");
         let outcome = state
             .receive_result("alpha", "A1", "A3", "no_match")
             .unwrap();
@@ -1238,6 +1313,7 @@ mod tests {
         // not by anything that verifies they actually reach a score.
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 50); // tier +1
+        state.receive_flip_both("alpha", "A1", "A3");
         state
             .receive_result("alpha", "A1", "A3", "no_match")
             .unwrap();
@@ -1248,6 +1324,7 @@ mod tests {
     fn wrong_match_at_a_middling_slow_pace_scores_the_minus_one_tier() {
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 90); // tier -1
+        state.receive_flip_both("alpha", "A1", "A3");
         state.receive_result("alpha", "A1", "A3", "match").unwrap(); // wrong match
                                                                      // -1 flat penalty + tier -1 = -2
         assert_eq!(state.scores().get("alpha"), Some(&-2));
@@ -1266,6 +1343,7 @@ mod tests {
         let mut state = GameState::new(two_teams(), small_grid());
         state.receive_flip("alpha", "A1");
         state.receive_flip("alpha", "A3");
+        state.receive_flip_both("alpha", "A1", "A3");
         state.receive_result("alpha", "A1", "A3", "match").unwrap(); // wrong match: A1=dog, A3=cat, not actually a pair
         assert!(state.is_revealed("A1"));
         assert!(state.is_revealed("A3"));
@@ -1275,6 +1353,7 @@ mod tests {
     #[test]
     fn wrong_match_does_not_remove_cards_from_play() {
         let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A3");
         state.receive_result("alpha", "A1", "A3", "match").unwrap();
         assert_eq!(state.pairs_found(), 0); // A1/A3 were never actually a pair
     }
@@ -1303,6 +1382,7 @@ mod tests {
     fn hint_for_never_revealed_object_reveals_lexicographically_smaller_position() {
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 70);
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap(); // score 1, needed for the score>0 rule
                                                                      // "cat" is at A3 and A4, neither revealed yet.
         let outcome = state.receive_hint_request("alpha", "cat");
@@ -1319,6 +1399,7 @@ mod tests {
     #[test]
     fn hint_for_partially_revealed_object_reveals_the_still_closed_position() {
         let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap(); // score 1, continues (streak)
         state.receive_flip("alpha", "A3"); // reveal one half of the "cat" pair
         let outcome = state.receive_hint_request("alpha", "cat");
@@ -1335,6 +1416,7 @@ mod tests {
     fn hint_for_fully_resolved_object_is_rejected_and_still_costs_a_point() {
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 70);
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap(); // score 1
                                                                      // both dog positions (A1, A2) already revealed via the match above.
         let outcome = state.receive_hint_request("alpha", "dog");
@@ -1358,12 +1440,14 @@ mod tests {
     fn hint_request_at_cap_is_refused_with_no_additional_cost() {
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 70);
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap(); // score 1
         state.receive_hint_request("alpha", "dog"); // "dog" already resolved -> rejected, score 0, slot 1/2
                                                     // score is now 0, so give alpha another point before testing the cap specifically.
         state.receive_flip("alpha", "A3");
         state.receive_flip("alpha", "A4");
         age_turn_start(&mut state, 70);
+        state.receive_flip_both("alpha", "A3", "A4");
         state.receive_result("alpha", "A3", "A4", "match").unwrap(); // streak continues: +2 -> score 2
         state.receive_hint_request("alpha", "cat"); // "cat" already resolved above -> rejected, score 1, slot 2/2
         let outcome = state.receive_hint_request("alpha", "dog"); // 3rd attempt, cap reached
@@ -1374,6 +1458,7 @@ mod tests {
     #[test]
     fn hint_request_for_unknown_object_is_rejected() {
         let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap();
         let outcome = state.receive_hint_request("alpha", "elephant");
         match outcome {
@@ -1393,6 +1478,7 @@ mod tests {
     fn hint_queued_while_waiting_resolves_before_your_turn_is_sent() {
         let mut state = GameState::new(two_teams(), small_grid());
         // alpha claims a wrong match: +2 tier - 1 penalty = 1, turn -> beta.
+        state.receive_flip_both("alpha", "A1", "A3");
         let outcome = state.receive_result("alpha", "A1", "A3", "match").unwrap();
         assert_eq!(state.scores().get("alpha"), Some(&1));
         assert_eq!(state.active_team(), "beta");
@@ -1406,6 +1492,7 @@ mod tests {
         // beta's turn now ends (wrong match) and switches back to alpha --
         // the queued hint must resolve as part of that same message batch,
         // before alpha's `your_turn`.
+        state.receive_flip_both("beta", "A1", "A3");
         let messages = state
             .receive_result("beta", "A1", "A3", "match")
             .unwrap()
@@ -1441,6 +1528,7 @@ mod tests {
         assert!(immediate.is_none());
 
         // alpha ends its turn (no claim -- genuinely no match) so beta becomes active.
+        state.receive_flip_both("alpha", "A1", "A3");
         let messages = state
             .receive_result("alpha", "A1", "A3", "no_match")
             .unwrap()
@@ -1458,6 +1546,7 @@ mod tests {
     #[test]
     fn matched_positions_returns_only_confirmed_pairs_with_their_object() {
         let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap();
         let matched = state.matched_positions();
         assert_eq!(matched.get("A1"), Some(&"dog".to_string()));
@@ -1469,8 +1558,10 @@ mod tests {
     fn current_streak_reflects_consecutive_matches_this_turn() {
         let mut state = GameState::new(two_teams(), small_grid());
         assert_eq!(state.current_streak(), 0);
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap();
         assert_eq!(state.current_streak(), 1);
+        state.receive_flip_both("alpha", "A3", "A4");
         state.receive_result("alpha", "A3", "A4", "match").unwrap(); // also ends the game
         assert_eq!(state.current_streak(), 2);
     }
@@ -1478,6 +1569,7 @@ mod tests {
     #[test]
     fn current_streak_resets_to_zero_when_turn_switches() {
         let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A3");
         state.receive_result("alpha", "A1", "A3", "match").unwrap(); // wrong match, switches turn
         assert_eq!(state.current_streak(), 0);
     }
@@ -1504,6 +1596,7 @@ mod tests {
     #[test]
     fn set_score_overwrites_an_absolute_value() {
         let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap(); // score 1
         state.set_score("alpha", 42);
         assert_eq!(state.scores()["alpha"], 42);
@@ -1568,6 +1661,7 @@ mod tests {
     #[test]
     fn hints_used_map_reflects_per_team_usage() {
         let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap(); // score 1
         state.receive_hint_request("alpha", "dog"); // rejected (already resolved), still uses a slot
         let map = state.hints_used_map();
@@ -1578,6 +1672,7 @@ mod tests {
     #[test]
     fn pairs_matched_by_team_tracks_which_team_found_each_pair() {
         let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap();
         let map = state.pairs_matched_by_team();
         assert_eq!(map.get("alpha"), Some(&1));
@@ -1587,6 +1682,7 @@ mod tests {
     #[test]
     fn pairs_matched_by_team_does_not_credit_wrong_matches() {
         let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A3");
         state.receive_result("alpha", "A1", "A3", "match").unwrap(); // wrong match
         let map = state.pairs_matched_by_team();
         assert_eq!(map.get("alpha"), Some(&0));
@@ -1610,6 +1706,7 @@ mod tests {
         let mut state = GameState::new(practice_teams(), small_grid());
         assert!(!state.is_bot_turn()); // alpha (real team) always goes first
 
+        state.receive_flip_both("alpha", "A1", "A3");
         state
             .receive_result("alpha", "A1", "A3", "no_match")
             .unwrap(); // ends alpha's turn
@@ -1630,6 +1727,7 @@ mod tests {
         // Ends alpha's turn without revealing anything, so the bot starts
         // its turn with a completely blank board -- exercises the
         // "two fresh unrevealed positions" branch of choose_bot_pair.
+        state.receive_flip_both("alpha", "A1", "A3");
         state
             .receive_result("alpha", "A1", "A3", "no_match")
             .unwrap();
@@ -1660,16 +1758,39 @@ mod tests {
         // Reveal both dogs without matching them (declined claim).
         state.receive_flip("alpha", "A1");
         state.receive_flip("alpha", "A2");
+        state.receive_flip_both("alpha", "A1", "A2");
         state
             .receive_result("alpha", "A1", "A2", "no_match")
             .unwrap();
         // A1/A2 are still `revealed` (declining doesn't un-reveal them) --
         // the bot should recognize the known dog/dog pair immediately.
         assert!(state.is_bot_turn());
-        let (pos1, pos2) = state.choose_bot_pair();
+        let (pos1, pos2) = state.choose_bot_pair().unwrap();
         let mut pair = [pos1, pos2];
         pair.sort();
         assert_eq!(pair, ["A1".to_string(), "A2".to_string()]);
+    }
+
+    #[test]
+    fn choose_bot_pair_returns_none_instead_of_flipping_a_position_against_itself() {
+        // A malformed grid with an odd count of some class (a content
+        // authoring mistake, not something a real tournament grid should
+        // ever have) can leave exactly one revealed-but-unmatched position
+        // with nothing left to pair it against. Previously this indexed an
+        // empty/one-element slice directly and could panic or return the
+        // same position twice, which the referee would just reject --
+        // stranding the bot retrying the same invalid flip forever.
+        let unpaired_grid: HashMap<String, String> =
+            [("A1", "dog"), ("A2", "dog"), ("A3", "cat")]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+        let mut state = GameState::new(practice_teams(), unpaired_grid);
+        state.receive_flip_both("alpha", "A1", "A2");
+        age_turn_start(&mut state, 70);
+        state.receive_result("alpha", "A1", "A2", "match").unwrap(); // same team continues (streak)
+        state.receive_flip("alpha", "A3");
+        assert_eq!(state.choose_bot_pair(), None);
     }
 
     #[test]
@@ -1680,11 +1801,12 @@ mod tests {
         // unrevealed one rather than blindly picking two fresh cells.
         state.receive_flip("alpha", "A1");
         state.receive_flip("alpha", "A3");
+        state.receive_flip_both("alpha", "A1", "A3");
         state
             .receive_result("alpha", "A1", "A3", "no_match")
             .unwrap();
         assert!(state.is_bot_turn());
-        let (pos1, pos2) = state.choose_bot_pair();
+        let (pos1, pos2) = state.choose_bot_pair().unwrap();
         assert!(
             [&pos1, &pos2].contains(&&"A1".to_string())
                 || [&pos1, &pos2].contains(&&"A3".to_string()),
@@ -1700,6 +1822,7 @@ mod tests {
         // maybe_play_bot_turn forward (advancing a fake clock past the
         // think delay each time) should complete the match.
         let mut state = GameState::new(practice_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A3");
         state
             .receive_result("alpha", "A1", "A3", "no_match")
             .unwrap(); // hand off, reveals nothing
