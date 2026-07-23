@@ -586,8 +586,6 @@ impl GameState {
                     RefereeMessage::NoMatch {
                         pos1: pos1.to_string(),
                         pos2: pos2.to_string(),
-                        cls1: golden1.clone(),
-                        cls2: golden2.clone(),
                         scores: self.scores.clone(),
                     },
                 )

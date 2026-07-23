@@ -122,13 +122,9 @@ turn order (whoever won the riddle race goes first).
    - **Correct match:** points awarded, and **your turn continues** — go
      back to step 1.
    - **Wrong claim, or genuinely no match:** your turn ends. The `no_match`
-     response still includes the two cards' true classes on the wire, but
-     **don't build your strategy around it** — the reference client
-     deliberately does not use it to auto-correct your board memory
-     anymore, and the referee is expected to stop sending it as golden
-     truth in a future update. A misdetected pair needs to be caught by
-     your own model re-observing that position, not by reading the
-     answer off a wrong guess.
+     response deliberately doesn't include the two cards' true classes —
+     a misdetected pair needs to be caught by your own model re-observing
+     that position, not by reading the answer off a wrong guess.
 5. **You keep receiving every `card_revealed` broadcast even during the
    opponent's turn.** Both teams see everything that's ever flipped — this
    is deliberate. A team that ignores the opponent's turn is throwing away
@@ -364,7 +360,7 @@ Arena Agent.
 | `card_revealed` | `pos` | Broadcast to both teams on every physical flip — no class label, run your own model |
 | `invalid` | `reason` | Your last `flip`/`flip_both` request was rejected — pick a different position |
 | `match` | `cls, pos1, pos2, scorer, scores, remaining` | A claimed match was confirmed correct |
-| `no_match` | `pos1, pos2, cls1, cls2, scores` | Turn ended — wrong claim (penalty) or genuinely no match (no penalty). `cls1`/`cls2` are still golden truth on the wire for now, but treat this as a legacy field — the reference client ignores it, and a future update is expected to stop sending it as an answer key. |
+| `no_match` | `pos1, pos2, scores` | Turn ended — wrong claim (penalty) or genuinely no match (no penalty). Deliberately doesn't carry the real classes at `pos1`/`pos2` — a misdetected pair has to be caught by re-observing it, not by the referee handing you the answer on a wrong guess. |
 | `hint_response` | `row_digit_png_base64, col_digit_png_base64` | Paid hint accepted — two digit images, not text |
 | `hint_rejected` | `reason` | Paid hint rejected (still costs the point) — `"object already fully resolved"` or `"unknown object"` |
 | `game_over` | `winner, scores` | Match complete |
@@ -580,12 +576,10 @@ def on_match_confirmed(pos1, pos2):
     matched_positions.add(pos1)
     matched_positions.add(pos2)
 
-def on_no_match(pos1, pos2, true_cls1, true_cls2):
-    """true_cls1/true_cls2 come from the referee's no_match response and are
-    still golden truth on the wire for now, but deliberately UNUSED here --
-    self-correcting board_memory from the answer key defeats the point of
-    the vision challenge. If your model misread a card, catch it by letting
-    that position get re-observed naturally (e.g. via a future
+def on_no_match(pos1, pos2):
+    """The referee's no_match response deliberately doesn't carry the real
+    classes at pos1/pos2 -- if your model misread a card, catch it by
+    letting that position get re-observed naturally (e.g. via a future
     card_revealed), not by reading the answer off a wrong guess."""
 ```
 
@@ -621,8 +615,8 @@ def choose_pair(board_memory, matched_positions, all_positions):
         return unrevealed[0], unrevealed[1]
 
     # Board fully revealed but nothing pairs up -- only happens after a
-    # misdetection. Retry two unmatched revealed positions so the referee's
-    # next authoritative no_match response can correct us further.
+    # misdetection. Retry two unmatched revealed positions -- one of them
+    # will get re-observed on the next card_revealed for that position.
     unmatched_revealed = [p for p in board_memory if p not in matched_positions]
     return unmatched_revealed[0], unmatched_revealed[1]
 ```
@@ -683,7 +677,7 @@ while True:
         matched_positions.update([pos1, pos2])
         # your_turn will come again automatically -- loop continues
     else:
-        on_no_match(pos1, pos2, result['cls1'], result['cls2'])
+        on_no_match(pos1, pos2)
         # a 'wait' message will arrive next; loop back to wait_for('your_turn', ...)
 ```
 
@@ -813,10 +807,8 @@ No — pick one per turn. `flip_both` only works as your turn's first action.
 
 **Q: What happens if our vision model misdetects a card?**
 You'll get a `no_match` (or a wrong `match` claim penalty). The response
-still includes the true classes on the wire for now, but don't build your
-strategy around it — the reference client deliberately ignores it, and a
-future referee update is expected to stop sending it. Catch a misdetection
-by re-observing that position yourself the next time it comes up, not by
+deliberately doesn't include the true classes — catch a misdetection by
+re-observing that position yourself the next time it comes up, not by
 reading the answer off a wrong guess.
 
 **Q: Does Genesis affect our score if a call fails?**

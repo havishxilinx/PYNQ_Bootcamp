@@ -109,12 +109,15 @@ pub enum RefereeMessage {
         scores: HashMap<String, i32>,
         remaining: usize,
     },
+    /// Deliberately doesn't carry the real classes at `pos1`/`pos2` --
+    /// scoring is always decided server-side against the grid's real
+    /// answer key regardless of what a client thinks it saw, so a
+    /// misdetected pair has to be caught by re-observing it, not by the
+    /// referee handing out the answer on a wrong guess.
     #[serde(rename = "no_match")]
     NoMatch {
         pos1: String,
         pos2: String,
-        cls1: String,
-        cls2: String,
         scores: HashMap<String, i32>,
     },
     #[serde(rename = "game_over")]

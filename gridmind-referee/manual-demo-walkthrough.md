@@ -87,7 +87,7 @@ curl -s -X POST -d 'key=demokey&id=aa:aa:aa:aa:aa:aa&message={"type":"report_res
 curl -s -X GET -d "key=demokey&id=aa:aa:aa:aa:aa:aa" http://localhost:35050/receive_all
 ```
 
-Response: `no_match` (with golden `cls1`/`cls2` echoed back — this is what lets a student's vision system self-correct a misdetection), then `wait` (turn passes to beta).
+Response: `no_match` (deliberately doesn't echo back the real classes -- a misdetection has to be caught by re-observing the position, not by reading the referee's answer key), then `wait` (turn passes to beta).
 
 ## Part 4 — Simulate a correct match (streak scoring)
 
