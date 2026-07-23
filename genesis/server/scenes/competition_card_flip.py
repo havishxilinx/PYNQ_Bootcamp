@@ -195,7 +195,12 @@ def setup(scene, card_layout=None):
     for row in range(grid_rows):
         for col in range(grid_cols):
             x = grid_start_x + col * card_spacing
-            y = grid_start_y + row * card_spacing
+            # Flipped vertically relative to row order: row 0 sits at the far
+            # (max-Y) edge of the grid instead of the near edge, to match how
+            # the grid actually reads in the arena camera feed. Only the
+            # world-space placement is mirrored -- card_idx/color_idx below
+            # still index card_layout in its original, unflipped row order.
+            y = grid_start_y + (grid_rows - 1 - row) * card_spacing
 
             card_idx = row * grid_cols + col
             color_idx = color_pairs[card_idx]
