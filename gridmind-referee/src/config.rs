@@ -40,6 +40,17 @@ pub struct GameConfig {
     /// comment. A wrong claim, a correct decline, and a timeout each score
     /// their own flat, speed-independent outcome instead.
     pub scoring_tiers: Vec<ScoringTier>,
+    /// How long to wait, after sending a turn's outcome message (`match`/
+    /// `no_match`, or a resolved `hint_response`), before sending the
+    /// following `your_turn`/`wait` pair -- instead of sending both in the
+    /// same instant. Some board clients only read the first message off a
+    /// poll instead of draining every queued one, so a `your_turn` bundled
+    /// into the same round-trip as the outcome it follows can be silently
+    /// dropped. Only takes effect when a turn signal is actually bundled
+    /// with something else (see `arena::send_all_delaying_turn_signal`) --
+    /// a timeout-triggered switch, which has nothing to bundle it with,
+    /// still sends immediately.
+    pub turn_signal_delay_ms: u64,
 }
 
 impl Default for GameConfig {
@@ -67,6 +78,7 @@ impl Default for GameConfig {
                     bonus: -2,
                 },
             ],
+            turn_signal_delay_ms: 1000,
         }
     }
 }
@@ -78,6 +90,10 @@ impl GameConfig {
 
     pub fn physical_flip_offset(&self) -> Duration {
         Duration::from_secs(self.physical_flip_offset_secs)
+    }
+
+    pub fn turn_signal_delay(&self) -> Duration {
+        Duration::from_millis(self.turn_signal_delay_ms)
     }
 
     /// Scoring bonus for a *correct match's* raw elapsed duration, after

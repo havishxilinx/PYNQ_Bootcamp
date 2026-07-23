@@ -62,6 +62,13 @@ enum Command {
         /// documented default; ignored entirely when `genesis_url` is unset.
         #[arg(long, default_value_t = 8080)]
         genesis_stream_port: u16,
+        /// Runs `arena.html` in its full standings/schedule layout instead
+        /// of the compact video-embed strip, even though Genesis is
+        /// configured and every Genesis call still happens as normal.
+        /// Ignored when `genesis_url` is unset (that layout is already the
+        /// default with no Genesis at all).
+        #[arg(long)]
+        hide_genesis_video: bool,
     },
 }
 
@@ -162,6 +169,7 @@ fn main() -> Result<()> {
             genesis_url,
             genesis_admin_password,
             genesis_stream_port,
+            hide_genesis_video,
         } => run_arena(
             &server,
             &key,
@@ -172,6 +180,7 @@ fn main() -> Result<()> {
                 url: genesis_url,
                 admin_password: genesis_admin_password,
                 stream_port: genesis_stream_port,
+                hide_video: hide_genesis_video,
             },
         ),
     }

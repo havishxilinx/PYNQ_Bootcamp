@@ -11,5 +11,6 @@
     { "max_elapsed_secs": 20, "bonus": 2 },
     { "max_elapsed_secs": 60, "bonus": 0 },
     { "max_elapsed_secs": 100, "bonus": -2 }
-  ]
+  ],
+  "turn_signal_delay_ms": 1000
 }

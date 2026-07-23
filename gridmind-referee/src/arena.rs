@@ -45,11 +45,19 @@ struct AssignedMatch {
 /// Groups `run_arena`'s Genesis-related CLI parameters -- its parameter
 /// list crossed clippy's `too_many_arguments` threshold once the stream
 /// port was added. `url: None` means Genesis is unconfigured for this
-/// arena entirely; the other two fields are then unused.
+/// arena entirely; the other three fields are then unused.
 pub struct GenesisConfig {
     pub url: Option<String>,
     pub admin_password: String,
     pub stream_port: u16,
+    /// Forces `genesis_configured: false` on the wire regardless of whether
+    /// Genesis is actually running -- so `arena.html` always renders the
+    /// full standings/schedule layout instead of trying to embed a video
+    /// feed, while every actual Genesis call (`start_competition`,
+    /// `flip_card` per move, `stop_competition`) still happens exactly as
+    /// it would otherwise. Only affects the frontend; never touches
+    /// `genesis: Option<&GenesisClient>` itself.
+    pub hide_video: bool,
 }
 
 /// Runs forever: waits for a match assignment from the Master, plays it
@@ -100,6 +108,7 @@ pub fn run_arena(
             genesis.as_ref(),
             &genesis_config.admin_password,
             genesis_config.stream_port,
+            genesis_config.hide_video,
         ) {
             eprintln!(
                 "arena {arena_num}: match ended early due to a communication error: {err:#} -- waiting for the next assignment"
@@ -173,6 +182,7 @@ fn run_one_match(
     genesis: Option<&GenesisClient>,
     genesis_admin_password: &str,
     genesis_stream_port: u16,
+    hide_genesis_video: bool,
 ) -> Result<()> {
     let pool_num = assignment.pool;
     let grid = load_grid(&assignment.grid_id)?;
@@ -257,7 +267,7 @@ fn run_one_match(
             now: Instant::now(),
             puzzle_winner: &assignment.first_turn_team,
             genesis_stream_url: genesis_stream_url.clone(),
-            genesis_configured: genesis.is_some(),
+            genesis_configured: genesis.is_some() && !hide_genesis_video,
         },
     )?;
 
@@ -321,7 +331,7 @@ fn run_one_match(
                         now: Instant::now(),
                         puzzle_winner: &assignment.first_turn_team,
                         genesis_stream_url: genesis_stream_url.clone(),
-                        genesis_configured: genesis.is_some(),
+                        genesis_configured: genesis.is_some() && !hide_genesis_video,
                     },
                 )?;
                 continue;
@@ -361,7 +371,7 @@ fn run_one_match(
                 // Join is handled by the lobby listener, not the arena.
                 StudentMessage::Join { .. } => vec![],
             };
-            send_all(client, outgoing)?;
+            send_all_delaying_turn_signal(client, outgoing)?;
             report_to_master(
                 client,
                 master_id,
@@ -372,7 +382,7 @@ fn run_one_match(
                     now: Instant::now(),
                     puzzle_winner: &assignment.first_turn_team,
                     genesis_stream_url: genesis_stream_url.clone(),
-                    genesis_configured: genesis.is_some(),
+                    genesis_configured: genesis.is_some() && !hide_genesis_video,
                 },
             )?;
         }
@@ -407,14 +417,18 @@ fn run_one_match(
                         now: Instant::now(),
                         puzzle_winner: &assignment.first_turn_team,
                         genesis_stream_url: genesis_stream_url.clone(),
-                        genesis_configured: genesis.is_some(),
+                        genesis_configured: genesis.is_some() && !hide_genesis_video,
                     },
                 )?;
             }
         }
 
         if let Some(outgoing) = state.check_timeout(Instant::now()) {
-            send_all(client, outgoing)?;
+            // A timed-out turn's only bundling risk is a hint that was
+            // queued while this team's opponent was still active and
+            // resolves right as they take over -- same batching hazard as
+            // `receive_result`'s outcome + turn-signal bundle.
+            send_all_delaying_turn_signal(client, outgoing)?;
         }
 
         sleep(POLL_INTERVAL);
@@ -507,4 +521,30 @@ fn send_all(client: &P2pClient, messages: Vec<(String, RefereeMessage)>) -> Resu
         }
     }
     Ok(())
+}
+
+/// Like `send_all`, but holds back `your_turn`/`wait` until
+/// `turn_signal_delay_ms` after everything else in `messages` has gone out
+/// -- instead of both landing in the same instant. `receive_result` and
+/// `receive_hint_request` bundle a turn announcement into the same batch as
+/// the outcome it follows (`match`/`no_match`, or a resolved
+/// `hint_response`), and a board client that only reads the first message
+/// off a poll instead of draining every queued one can silently miss
+/// `your_turn` when it's sent right alongside something else. Only delays
+/// when there's actually something to separate it from -- a lone turn
+/// signal (e.g. from a timeout, which has nothing bundled with it) still
+/// goes out immediately.
+fn send_all_delaying_turn_signal(
+    client: &P2pClient,
+    messages: Vec<(String, RefereeMessage)>,
+) -> Result<()> {
+    let (turn_signals, immediate): (Vec<_>, Vec<_>) = messages.into_iter().partition(|(_, msg)| {
+        matches!(msg, RefereeMessage::YourTurn { .. } | RefereeMessage::Wait { .. })
+    });
+    let needs_delay = !immediate.is_empty() && !turn_signals.is_empty();
+    send_all(client, immediate)?;
+    if needs_delay {
+        sleep(crate::config::get().turn_signal_delay());
+    }
+    send_all(client, turn_signals)
 }
