@@ -121,7 +121,7 @@ curl -s -X POST -d 'key=demokey&id=bb:bb:bb:bb:bb:bb&message={"type":"report_res
 curl -s -X GET -d "key=demokey&id=bb:bb:bb:bb:bb:bb" http://localhost:35050/receive_all
 ```
 
-Response: score drops by 1, turn passes to alpha immediately (both cards flip back — nothing is removed from play, they can be flipped again later).
+Response: score drops by the flat wrong-match penalty (2 points by default, regardless of how fast the claim came in), turn passes to alpha immediately (both cards flip back — nothing is removed from play, they can be flipped again later).
 
 ## Part 6 — Paid hint (accepted, then rejected)
 

@@ -5,12 +5,11 @@
   "free_hint_secs": 60,
   "hint_cap": 2,
   "hint_cost": 1,
+  "wrong_match_penalty": -2,
+  "timeout_penalty": -3,
   "scoring_tiers": [
     { "max_elapsed_secs": 20, "bonus": 2 },
-    { "max_elapsed_secs": 40, "bonus": 1 },
     { "max_elapsed_secs": 60, "bonus": 0 },
-    { "max_elapsed_secs": 80, "bonus": -1 },
-    { "max_elapsed_secs": 100, "bonus": -2 },
-    { "max_elapsed_secs": 999999, "bonus": -3 }
+    { "max_elapsed_secs": 100, "bonus": -2 }
   ]
 }

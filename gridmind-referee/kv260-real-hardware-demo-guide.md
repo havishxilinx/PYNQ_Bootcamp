@@ -144,8 +144,9 @@ Each board's `MatchClient` plays fully autonomously once you flip its Play Mode 
 switch it). On its turn: picks two positions, runs real DPU inference via `detect_position()` on
 the pre-staged photo for each, compares its own two detections, and reports a `match`/`no_match`
 claim — the referee validates that claim against `kv260_test_grid.json`'s real answer key and
-scores accordingly (streak bonus/wrong-match penalty, plus this session's new response-time tier
-based on how fast the report came back).
+scores accordingly: a correct match earns a streak bonus plus a speed bonus for how fast it came
+back, while a wrong claim, a correct decline, or a timeout each score their own flat,
+speed-independent outcome (see `student-competition-guide.md` Section 6 for exact numbers).
 
 ## Step 5 — Hints, if you want to see that path too
 

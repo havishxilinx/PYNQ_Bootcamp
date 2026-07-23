@@ -2,14 +2,15 @@ use crate::messages::RefereeMessage;
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-/// Points awarded/deducted based on how long it took the active team to
-/// act since being handed the turn (or since their previous action, if a
-/// streak is continuing -- the clock resets on every action). Boundaries
-/// and bonuses come from `data/game_config.json` (see `config::GameConfig`)
-/// so they can be tuned without a rebuild. A full timeout uses the same
-/// catch-all bonus as the slowest acted-tier -- no special-casing needed,
-/// one function covers both (see `check_timeout`, which always calls this
-/// with an elapsed value >= the configured turn timeout).
+/// Points awarded based on how fast a *correct* match was made since being
+/// handed the turn (or since the previous match, if a streak is
+/// continuing -- the clock resets on every correct match). Boundaries and
+/// bonuses come from `data/game_config.json` (see `config::GameConfig`) so
+/// they can be tuned without a rebuild. Deliberately only ever called from
+/// `receive_result`'s correct-match branch -- a wrong claim, a correct
+/// decline, and a timeout each score their own flat, speed-independent
+/// outcome (`wrong_match_penalty`/0/`timeout_penalty`) instead, so being
+/// wrong is never rewarded no matter how fast it happens.
 fn response_tier_bonus(elapsed: Duration) -> i32 {
     crate::config::get().tier_bonus(elapsed)
 }
@@ -515,14 +516,17 @@ impl GameState {
             return None;
         }
 
-        let tier_bonus = response_tier_bonus(Instant::now().duration_since(self.turn_start));
-
         let golden1 = self.grid.get(pos1).cloned().unwrap_or_default();
         let golden2 = self.grid.get(pos2).cloned().unwrap_or_default();
         let actually_matches = !golden1.is_empty() && golden1 == golden2;
         let claims_match = claim == "match";
 
         if claims_match && actually_matches {
+            // The speed tier only ever applies to a genuine correct match --
+            // see `GameConfig::tier_bonus`'s doc comment for why a wrong
+            // claim, a correct decline, and a timeout each score their own
+            // flat outcome instead of also drawing from this table.
+            let tier_bonus = response_tier_bonus(Instant::now().duration_since(self.turn_start));
             self.streak += 1;
             let awarded = self.streak as i32 + tier_bonus;
             *self
@@ -576,14 +580,16 @@ impl GameState {
         }
 
         let wrong_match = claims_match && !actually_matches;
-        // A wrong claim keeps the existing -1 flat penalty on top of the
-        // tier; an explicit decline (correct "no match" call) gets the
-        // tier alone -- declining is still an action, and is scored on
-        // how fast it happened, unlike before this feature existed.
+        // A wrong claim costs a flat, speed-independent penalty -- no
+        // longer combined with the speed tier, so guessing wrong is never
+        // rewarded for being fast (see GameConfig::tier_bonus's doc
+        // comment). An explicit decline (correctly calling "no match")
+        // scores neither a bonus nor a penalty: declining isn't the hard
+        // part of this game, so there's nothing to reward or punish there.
         let score_delta = if wrong_match {
-            tier_bonus - 1
+            crate::config::get().wrong_match_penalty
         } else {
-            tier_bonus
+            0
         };
         *self
             .scores
@@ -616,9 +622,9 @@ impl GameState {
     }
 
     /// Called periodically by the poll loop. If the active team has taken
-    /// too long to act, forfeit their turn and switch -- as of the
-    /// time-based scoring feature, this now costs the same flat -3 as
-    /// the slowest acted-tier (previously: no penalty at all).
+    /// too long to act, forfeit their turn and switch -- costs a flat,
+    /// standalone `timeout_penalty` (not derived from the speed tier
+    /// table; see `GameConfig::tier_bonus`'s doc comment).
     pub fn check_timeout(&mut self, now: Instant) -> Option<Vec<(String, RefereeMessage)>> {
         if self.is_paused() {
             return None;
@@ -631,7 +637,7 @@ impl GameState {
         *self
             .scores
             .get_mut(&active_team)
-            .expect("active team always has a score entry") += response_tier_bonus(elapsed);
+            .expect("active team always has a score entry") += crate::config::get().timeout_penalty;
         self.next_team();
         let mut messages = vec![];
         self.push_turn_signals(&mut messages);
@@ -928,13 +934,32 @@ mod tests {
     }
 
     #[test]
-    fn wrong_match_stacks_flat_penalty_with_a_slow_response_tier() {
+    fn wrong_match_scores_only_the_flat_penalty_regardless_of_speed() {
+        // A wrong claim no longer draws from the speed tier at all -- a
+        // fast wrong guess used to net a positive score (e.g. +2 tier - 1
+        // flat penalty = +1); now it's always exactly `wrong_match_penalty`
+        // no matter how fast or slow the guess was.
         let mut state = GameState::new(two_teams(), small_grid());
-        age_turn_start(&mut state, 110); // tier -2 (110-20=90s effective)
+        age_turn_start(&mut state, 5); // fast: old tier would have been +2
         state.receive_flip_both("alpha", "A1", "A3");
         state.receive_result("alpha", "A1", "A3", "match").unwrap(); // wrong match
-                                                                     // -1 flat penalty + tier -2 = -3
-        assert_eq!(state.scores().get("alpha"), Some(&-3));
+        assert_eq!(state.scores().get("alpha"), Some(&-2));
+    }
+
+    #[test]
+    fn wrong_match_penalty_is_the_same_at_any_speed() {
+        let mut fast = GameState::new(two_teams(), small_grid());
+        age_turn_start(&mut fast, 5);
+        fast.receive_flip_both("alpha", "A1", "A3");
+        fast.receive_result("alpha", "A1", "A3", "match").unwrap();
+
+        let mut slow = GameState::new(two_teams(), small_grid());
+        age_turn_start(&mut slow, 150);
+        slow.receive_flip_both("alpha", "A1", "A3");
+        slow.receive_result("alpha", "A1", "A3", "match").unwrap();
+
+        assert_eq!(fast.scores().get("alpha"), slow.scores().get("alpha"));
+        assert_eq!(fast.scores().get("alpha"), Some(&-2));
     }
 
     #[test]
@@ -1262,72 +1287,32 @@ mod tests {
             ResultOutcome::WrongMatch { .. } => {}
             other => panic!("expected WrongMatch, got {other:?}"),
         }
-        assert_eq!(state.scores().get("alpha"), Some(&-1));
+        assert_eq!(state.scores().get("alpha"), Some(&-2)); // flat wrong_match_penalty, speed-independent
         assert_eq!(state.active_team(), "beta"); // turn switched immediately
     }
 
     #[test]
-    fn no_claim_now_scores_the_response_tier_instead_of_always_zero() {
-        let mut state = GameState::new(two_teams(), small_grid());
-        age_turn_start(&mut state, 10); // tier +2 -- a fast, correct decline
-        state.receive_flip_both("alpha", "A1", "A3");
-        let outcome = state
-            .receive_result("alpha", "A1", "A3", "no_match")
-            .unwrap();
+    fn correct_decline_always_scores_zero_regardless_of_speed() {
+        // Declining isn't the hard part of this game -- a genuinely correct
+        // "no match" call scores neither a bonus nor a penalty, no matter
+        // how fast or slow it happened. (Speed is only ever rewarded on an
+        // actual correct match -- see GameConfig::tier_bonus's doc comment.)
+        let mut fast = GameState::new(two_teams(), small_grid());
+        age_turn_start(&mut fast, 10);
+        fast.receive_flip_both("alpha", "A1", "A3");
+        let outcome = fast.receive_result("alpha", "A1", "A3", "no_match").unwrap();
         match outcome {
             ResultOutcome::NoClaim { .. } => {}
             other => panic!("expected NoClaim, got {other:?}"),
         }
-        // Before this feature, declining always scored 0 regardless of
-        // speed. Now a decline is still a real action and gets the
-        // response tier alone (no streak, no -1 flat penalty).
-        assert_eq!(state.scores().get("alpha"), Some(&2));
-        assert_eq!(state.active_team(), "beta");
-    }
+        assert_eq!(fast.scores().get("alpha"), Some(&0));
+        assert_eq!(fast.active_team(), "beta");
 
-    #[test]
-    fn no_claim_at_slow_speed_scores_a_negative_tier() {
-        // The fast-decline case above only shows the tier can be a bonus.
-        // A slow decline is a real, plausible live-event scenario (a team
-        // takes a while to decide "no match") and must show up as a
-        // penalty, not silently stay at 0 like the pre-feature behavior.
-        let mut state = GameState::new(two_teams(), small_grid());
-        age_turn_start(&mut state, 110); // tier -2
-        state.receive_flip_both("alpha", "A1", "A3");
-        let outcome = state
-            .receive_result("alpha", "A1", "A3", "no_match")
-            .unwrap();
-        match outcome {
-            ResultOutcome::NoClaim { .. } => {}
-            other => panic!("expected NoClaim, got {other:?}"),
-        }
-        assert_eq!(state.scores().get("alpha"), Some(&-2));
-        assert_eq!(state.active_team(), "beta");
-    }
-
-    #[test]
-    fn no_claim_at_a_middling_pace_scores_the_plus_one_tier() {
-        // The +2 and -2/-3 tiers are already exercised against real
-        // scores above; the middle tiers (+1 and -1) were previously
-        // only checked by the pure response_tier_bonus boundary test,
-        // not by anything that verifies they actually reach a score.
-        let mut state = GameState::new(two_teams(), small_grid());
-        age_turn_start(&mut state, 50); // tier +1
-        state.receive_flip_both("alpha", "A1", "A3");
-        state
-            .receive_result("alpha", "A1", "A3", "no_match")
-            .unwrap();
-        assert_eq!(state.scores().get("alpha"), Some(&1));
-    }
-
-    #[test]
-    fn wrong_match_at_a_middling_slow_pace_scores_the_minus_one_tier() {
-        let mut state = GameState::new(two_teams(), small_grid());
-        age_turn_start(&mut state, 90); // tier -1
-        state.receive_flip_both("alpha", "A1", "A3");
-        state.receive_result("alpha", "A1", "A3", "match").unwrap(); // wrong match
-                                                                     // -1 flat penalty + tier -1 = -2
-        assert_eq!(state.scores().get("alpha"), Some(&-2));
+        let mut slow = GameState::new(two_teams(), small_grid());
+        age_turn_start(&mut slow, 150);
+        slow.receive_flip_both("alpha", "A1", "A3");
+        slow.receive_result("alpha", "A1", "A3", "no_match").unwrap();
+        assert_eq!(slow.scores().get("alpha"), Some(&0));
     }
 
     #[test]
@@ -1476,25 +1461,51 @@ mod tests {
 
     #[test]
     fn hint_queued_while_waiting_resolves_before_your_turn_is_sent() {
-        let mut state = GameState::new(two_teams(), small_grid());
-        // alpha claims a wrong match: +2 tier - 1 penalty = 1, turn -> beta.
-        state.receive_flip_both("alpha", "A1", "A3");
-        let outcome = state.receive_result("alpha", "A1", "A3", "match").unwrap();
-        assert_eq!(state.scores().get("alpha"), Some(&1));
+        // Three pairs, not small_grid()'s two -- the hint below is for
+        // "cat", and it must still have an unrevealed position by the time
+        // it resolves, so the turn-passing actions below need a *third*
+        // pair (bird) to touch instead of ever revealing cat's cells.
+        let grid: HashMap<String, String> = [
+            ("A1", "dog"),
+            ("A2", "dog"),
+            ("A3", "cat"),
+            ("A4", "cat"),
+            ("A5", "bird"),
+            ("A6", "bird"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let mut state = GameState::new(two_teams(), grid);
+        // Give alpha a positive score first via a real correct match --
+        // resolve_hint requires score > 0 (see
+        // queued_hint_with_nonpositive_score_is_dropped_silently_at_turn_start),
+        // so the hint-ordering behavior this test actually cares about
+        // needs a positive starting score to even be reachable.
+        state.receive_flip_both("alpha", "A1", "A2");
+        state.receive_result("alpha", "A1", "A2", "match").unwrap(); // dog/dog: correct match
+        let alpha_score_before_hint = *state.scores().get("alpha").unwrap();
+        assert!(alpha_score_before_hint > 0);
+
+        // Hand the turn to beta without touching cat's cells (A3/A4) at
+        // all: declining scores 0 regardless of whether the pair was
+        // secretly real.
+        state.receive_flip_both("alpha", "A5", "A6");
+        state.receive_result("alpha", "A5", "A6", "no_match").unwrap();
         assert_eq!(state.active_team(), "beta");
-        drop(outcome);
 
         // alpha isn't active, but queues a hint for "cat" instead of being dropped.
         let immediate = state.receive_hint_request("alpha", "cat");
         assert!(immediate.is_none(), "queuing produces no immediate response");
         assert_eq!(state.queued_hints.get("alpha"), Some(&"cat".to_string()));
 
-        // beta's turn now ends (wrong match) and switches back to alpha --
-        // the queued hint must resolve as part of that same message batch,
-        // before alpha's `your_turn`.
-        state.receive_flip_both("beta", "A1", "A3");
+        // beta's turn now ends (declines the same bird pair, still not
+        // touching cat) and switches back to alpha -- the queued hint must
+        // resolve as part of that same message batch, before alpha's
+        // `your_turn`.
+        state.receive_flip_both("beta", "A5", "A6");
         let messages = state
-            .receive_result("beta", "A1", "A3", "match")
+            .receive_result("beta", "A5", "A6", "no_match")
             .unwrap()
             .into_messages();
         assert_eq!(state.active_team(), "alpha");
@@ -1516,8 +1527,11 @@ mod tests {
             "hint must arrive before your_turn, not be carved out of the turn clock"
         );
 
-        // cost still applies: alpha's score of 1 drops to 0.
-        assert_eq!(state.scores().get("alpha"), Some(&0));
+        // cost still applies: the hint deducts hint_cost from alpha's score.
+        assert_eq!(
+            state.scores().get("alpha"),
+            Some(&(alpha_score_before_hint - crate::config::get().hint_cost))
+        );
     }
 
     #[test]

@@ -58,14 +58,16 @@ let TURN_TIMEOUT_SECS = 120;
 let PHYSICAL_FLIP_OFFSET_SECS = 20;
 let PUZZLE_RACE_SECS = 120;
 let FREE_HINT_SECS = 60;
+// Only ever applies to a correct match -- a wrong claim, a correct decline,
+// and a timeout each score their own flat, speed-independent outcome (see
+// WRONG_MATCH_PENALTY/TIMEOUT_PENALTY below).
 let scoringTiers = [
   { max_elapsed_secs: 20, bonus: 2 },
-  { max_elapsed_secs: 40, bonus: 1 },
   { max_elapsed_secs: 60, bonus: 0 },
-  { max_elapsed_secs: 80, bonus: -1 },
   { max_elapsed_secs: 100, bonus: -2 },
-  { max_elapsed_secs: 999999, bonus: -3 },
 ];
+let WRONG_MATCH_PENALTY = -2;
+let TIMEOUT_PENALTY = -3;
 
 async function loadConfig() {
   try {
@@ -76,6 +78,8 @@ async function loadConfig() {
     PUZZLE_RACE_SECS = cfg.puzzle_race_secs;
     FREE_HINT_SECS = cfg.free_hint_secs;
     scoringTiers = cfg.scoring_tiers;
+    WRONG_MATCH_PENALTY = cfg.wrong_match_penalty;
+    TIMEOUT_PENALTY = cfg.timeout_penalty;
   } catch (err) {
     console.warn('config: failed to load /api/config, using built-in defaults', err);
   }

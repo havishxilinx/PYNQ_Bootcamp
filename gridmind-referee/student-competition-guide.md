@@ -135,53 +135,66 @@ turn order (whoever won the riddle race goes first).
 
 ## 6. Scoring
 
-### Correct matches — streak bonus
+Every turn outcome scores its own number. **Speed only ever matters when
+you're actually right** — a wrong claim, a correct decline, and a timeout
+each score a flat, speed-independent outcome no matter how fast or slow
+they happen. Only a correct match combines two numbers: a streak bonus and
+a speed bonus.
 
-Each match in a row within the same turn is worth one more point than the
-last:
+### Correct match — streak bonus + speed bonus
 
-| Matches in a row this turn | Points for that turn |
+The streak bonus is just "how many correct matches in a row this turn,
+including this one" — it resets to 0 the moment your turn ends for any
+other reason:
+
+| This match is your... | Streak bonus |
 |---|---|
-| 1 | 1 |
-| 2 | 3 (1+2) |
-| 3 | 6 (1+2+3) |
-| 4 | 10 (1+2+3+4) |
+| 1st correct match in a row | 1 |
+| 2nd correct match in a row | 2 |
+| 3rd correct match in a row | 3 |
+| 4th correct match in a row | 4 |
 
-### Wrong match
+On top of that, how fast you reported it (from the moment you were handed
+the turn, or since your previous match if a streak is continuing) adds a
+speed bonus:
 
-**−1 point**, and your turn ends immediately.
-
-### Response-time tier — applies to every turn outcome, including timeouts
-
-On top of the above, how fast you acted after being handed the turn adds or
-subtracts points — **this applies even if you time out or decline**, which
-is a real behavior worth knowing about:
-
-| Time elapsed when you acted (or ran out) | Bonus/penalty |
+| Time elapsed when you reported | Speed bonus |
 |---|---|
 | 0–40s | +2 |
-| 41–60s | +1 |
-| 61–80s | 0 |
-| 81–100s | −1 |
-| 101–120s | −2 |
-| Beyond 120s / full timeout | −3 |
+| 41–80s | 0 |
+| 81–120s | −2 |
 
-The first tier is 40 seconds wide, not 20 — the first 20 seconds of every
-action are treated as unavoidable physical-flip/camera overhead and don't
-count against you. Everything after that is real decision + detection time.
-This stacks with the streak bonus on a correct match, adds to the −1 flat
-penalty on a wrong match, and — a real behavior worth knowing — also applies
-to declines and full timeouts, which some older docs describe as always
-scoring 0 regardless of speed. That is no longer true: a team that always
-sits and waits out the full clock is actively penalized every turn, not just
-missing out on points.
+The first bracket is 40 seconds wide, not 20 — the first 20 seconds of
+every action are treated as unavoidable physical-flip/camera overhead and
+don't count against you.
 
-**These exact numbers (turn timeout, the 20s allowance, and every tier
-boundary/bonus above) are tunable per event via a config file** and could be
-adjusted before your specific event — the numbers above are what ships by
-default. If your event's numbers differ, the RC Team will tell you; the
-mechanism (a 6-tier scale based on how fast you act) stays the same either
-way.
+**Total for a correct match = streak bonus + speed bonus.** A fast 1st
+match nets `1 + 2 = 3`. A 3rd match in a row done in the 41–80s bracket
+nets `3 + 0 = 3`.
+
+### Wrong match claim
+
+A flat **−2**, always, regardless of speed. Your turn ends immediately.
+Being fast doesn't reduce this, and being slow doesn't make it worse — it's
+a fixed cost for claiming a match that wasn't real.
+
+### Correct decline ("no_match", genuinely not a pair)
+
+**0, always.** No bonus, no penalty, regardless of speed. Declining isn't
+the hard part of this game, so there's nothing to reward or punish about
+recognizing two different cards.
+
+### Timeout (no action within 120 seconds)
+
+A flat **−3**, always. Sitting out the clock every turn is a real, active
+penalty, not a neutral do-nothing.
+
+**These exact numbers (turn timeout, the 20s allowance, every speed
+bracket, the wrong-match penalty, and the timeout penalty) are tunable per
+event via a config file** and could be adjusted before your specific
+event — the numbers above are what ships by default. If your event's
+numbers differ, the RC Team will tell you; the mechanism (speed only
+rewards being right, everything else is flat) stays the same either way.
 
 ## 7. Hints
 
@@ -242,7 +255,8 @@ not competitive.
    its own from `game_start` to `game_over`.
 2. **A correct match keeps your turn.** Keep flipping until you get a wrong
    claim or the match ends.
-3. **A wrong claim costs 1 point and ends your turn immediately.**
+3. **A wrong claim costs a flat 2 points, regardless of speed, and ends
+   your turn immediately.**
 4. **Both teams receive every card reveal, regardless of whose turn it
    was.** Use that information — it's free.
 5. **Two flip protocols, side by side, not a replacement for each other.**
@@ -797,10 +811,12 @@ join_competition(client, MASTER_ID, TEAM_SECRET)
 
 ## 15. FAQ
 
-**Q: Our score changed on what looked like "nothing happening" (a timeout or
-decline). Is that a bug?**
-No — the response-time tier applies even to timeouts and declines now (see
-[Section 6](#6-scoring)).
+**Q: Our score dropped after a timeout even though we didn't do anything
+wrong. Is that a bug?**
+No — a full timeout is a flat penalty (see [Section 6](#6-scoring)), not a
+neutral do-nothing. A correct decline, on the other hand, always scores
+exactly 0 — if your score changed after a decline, something else moved it
+(check the log for what else happened that turn).
 
 **Q: Can we mix `flip` and `flip_both` in the same turn?**
 No — pick one per turn. `flip_both` only works as your turn's first action.
