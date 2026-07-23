@@ -196,15 +196,25 @@ until both teams are known to have joined.**
 
 Scoring is claim-based: each team compares its own two detections and reports
 `match`/`no_match`; the referee validates against the grid's golden answer key.
-On top of the existing streak bonus, a **response-time tier** now also applies
-based on how fast a team acts after being handed the turn (0–40s: +2, 41–60s:
-+1, 61–80s: 0, 81–100s: −1, 101–120s: −2, beyond 120s/timeout: −3) — this
-stacks with the streak/penalty and, unlike before, now also applies to
-declines and full timeouts (previously always 0 regardless of speed). If a
-team asks why their score moved on a "no_match" or a timeout, this is why.
-The first tier is 40 seconds wide (not 20) because the first 20 seconds of
-every action are treated as unavoidable physical-flip/camera overhead and
-don't count against the team — see "Tuning timing and scoring" below.
+Two independent numbers add together on a correct match; every other outcome
+scores a single flat number with no speed component at all:
+
+- **Correct match:** streak count (1st in a row this turn = 1, 2nd = 2, 3rd =
+  3, ...) **plus** a speed bonus based on how fast it came back (0–40s: +2,
+  41–80s: 0, 81–120s: −2). This is the *only* outcome speed affects.
+- **Wrong match claim:** a flat **−2**, always, regardless of speed.
+- **Correct decline** ("no_match", genuinely not a pair): **0**, always —
+  declining isn't the hard part of this game, so there's nothing to reward
+  or punish there.
+- **Timeout** (no action at all): a flat **−3**, always.
+
+If a team asks why a fast wrong guess didn't score better than a slow one —
+it's deliberate. Speed used to apply to every outcome, which meant a fast
+wrong guess could still net a small positive score; now speed only ever
+rewards being *right*. The first speed tier is 40 seconds wide (not 20)
+because the first 20 seconds of every action are treated as unavoidable
+physical-flip/camera overhead and don't count against the team — see
+"Tuning timing and scoring" below.
 
 ## Tuning timing and scoring before the event
 

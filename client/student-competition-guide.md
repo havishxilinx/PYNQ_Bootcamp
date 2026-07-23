@@ -122,13 +122,9 @@ turn order (whoever won the riddle race goes first).
    - **Correct match:** points awarded, and **your turn continues** — go
      back to step 1.
    - **Wrong claim, or genuinely no match:** your turn ends. The `no_match`
-     response still includes the two cards' true classes on the wire, but
-     **don't build your strategy around it** — the reference client
-     deliberately does not use it to auto-correct your board memory
-     anymore, and the referee is expected to stop sending it as golden
-     truth in a future update. A misdetected pair needs to be caught by
-     your own model re-observing that position, not by reading the
-     answer off a wrong guess.
+     response deliberately doesn't include the two cards' true classes —
+     a misdetected pair needs to be caught by your own model re-observing
+     that position, not by reading the answer off a wrong guess.
 5. **You keep receiving every `card_revealed` broadcast even during the
    opponent's turn.** Both teams see everything that's ever flipped — this
    is deliberate. A team that ignores the opponent's turn is throwing away
@@ -139,53 +135,66 @@ turn order (whoever won the riddle race goes first).
 
 ## 6. Scoring
 
-### Correct matches — streak bonus
+Every turn outcome scores its own number. **Speed only ever matters when
+you're actually right** — a wrong claim, a correct decline, and a timeout
+each score a flat, speed-independent outcome no matter how fast or slow
+they happen. Only a correct match combines two numbers: a streak bonus and
+a speed bonus.
 
-Each match in a row within the same turn is worth one more point than the
-last:
+### Correct match — streak bonus + speed bonus
 
-| Matches in a row this turn | Points for that turn |
+The streak bonus is just "how many correct matches in a row this turn,
+including this one" — it resets to 0 the moment your turn ends for any
+other reason:
+
+| This match is your... | Streak bonus |
 |---|---|
-| 1 | 1 |
-| 2 | 3 (1+2) |
-| 3 | 6 (1+2+3) |
-| 4 | 10 (1+2+3+4) |
+| 1st correct match in a row | 1 |
+| 2nd correct match in a row | 2 |
+| 3rd correct match in a row | 3 |
+| 4th correct match in a row | 4 |
 
-### Wrong match
+On top of that, how fast you reported it (from the moment you were handed
+the turn, or since your previous match if a streak is continuing) adds a
+speed bonus:
 
-**−1 point**, and your turn ends immediately.
-
-### Response-time tier — applies to every turn outcome, including timeouts
-
-On top of the above, how fast you acted after being handed the turn adds or
-subtracts points — **this applies even if you time out or decline**, which
-is a real behavior worth knowing about:
-
-| Time elapsed when you acted (or ran out) | Bonus/penalty |
+| Time elapsed when you reported | Speed bonus |
 |---|---|
 | 0–40s | +2 |
-| 41–60s | +1 |
-| 61–80s | 0 |
-| 81–100s | −1 |
-| 101–120s | −2 |
-| Beyond 120s / full timeout | −3 |
+| 41–80s | 0 |
+| 81–120s | −2 |
 
-The first tier is 40 seconds wide, not 20 — the first 20 seconds of every
-action are treated as unavoidable physical-flip/camera overhead and don't
-count against you. Everything after that is real decision + detection time.
-This stacks with the streak bonus on a correct match, adds to the −1 flat
-penalty on a wrong match, and — a real behavior worth knowing — also applies
-to declines and full timeouts, which some older docs describe as always
-scoring 0 regardless of speed. That is no longer true: a team that always
-sits and waits out the full clock is actively penalized every turn, not just
-missing out on points.
+The first bracket is 40 seconds wide, not 20 — the first 20 seconds of
+every action are treated as unavoidable physical-flip/camera overhead and
+don't count against you.
 
-**These exact numbers (turn timeout, the 20s allowance, and every tier
-boundary/bonus above) are tunable per event via a config file** and could be
-adjusted before your specific event — the numbers above are what ships by
-default. If your event's numbers differ, the RC Team will tell you; the
-mechanism (a 6-tier scale based on how fast you act) stays the same either
-way.
+**Total for a correct match = streak bonus + speed bonus.** A fast 1st
+match nets `1 + 2 = 3`. A 3rd match in a row done in the 41–80s bracket
+nets `3 + 0 = 3`.
+
+### Wrong match claim
+
+A flat **−2**, always, regardless of speed. Your turn ends immediately.
+Being fast doesn't reduce this, and being slow doesn't make it worse — it's
+a fixed cost for claiming a match that wasn't real.
+
+### Correct decline ("no_match", genuinely not a pair)
+
+**0, always.** No bonus, no penalty, regardless of speed. Declining isn't
+the hard part of this game, so there's nothing to reward or punish about
+recognizing two different cards.
+
+### Timeout (no action within 120 seconds)
+
+A flat **−3**, always. Sitting out the clock every turn is a real, active
+penalty, not a neutral do-nothing.
+
+**These exact numbers (turn timeout, the 20s allowance, every speed
+bracket, the wrong-match penalty, and the timeout penalty) are tunable per
+event via a config file** and could be adjusted before your specific
+event — the numbers above are what ships by default. If your event's
+numbers differ, the RC Team will tell you; the mechanism (speed only
+rewards being right, everything else is flat) stays the same either way.
 
 ## 7. Hints
 
@@ -246,7 +255,8 @@ not competitive.
    its own from `game_start` to `game_over`.
 2. **A correct match keeps your turn.** Keep flipping until you get a wrong
    claim or the match ends.
-3. **A wrong claim costs 1 point and ends your turn immediately.**
+3. **A wrong claim costs a flat 2 points, regardless of speed, and ends
+   your turn immediately.**
 4. **Both teams receive every card reveal, regardless of whose turn it
    was.** Use that information — it's free.
 5. **Two flip protocols, side by side, not a replacement for each other.**
@@ -364,7 +374,7 @@ Arena Agent.
 | `card_revealed` | `pos` | Broadcast to both teams on every physical flip — no class label, run your own model |
 | `invalid` | `reason` | Your last `flip`/`flip_both` request was rejected — pick a different position |
 | `match` | `cls, pos1, pos2, scorer, scores, remaining` | A claimed match was confirmed correct |
-| `no_match` | `pos1, pos2, cls1, cls2, scores` | Turn ended — wrong claim (penalty) or genuinely no match (no penalty). `cls1`/`cls2` are still golden truth on the wire for now, but treat this as a legacy field — the reference client ignores it, and a future update is expected to stop sending it as an answer key. |
+| `no_match` | `pos1, pos2, scores` | Turn ended — wrong claim (penalty) or genuinely no match (no penalty). Deliberately doesn't carry the real classes at `pos1`/`pos2` — a misdetected pair has to be caught by re-observing it, not by the referee handing you the answer on a wrong guess. |
 | `hint_response` | `row_digit_png_base64, col_digit_png_base64` | Paid hint accepted — two digit images, not text |
 | `hint_rejected` | `reason` | Paid hint rejected (still costs the point) — `"object already fully resolved"` or `"unknown object"` |
 | `game_over` | `winner, scores` | Match complete |
@@ -580,12 +590,10 @@ def on_match_confirmed(pos1, pos2):
     matched_positions.add(pos1)
     matched_positions.add(pos2)
 
-def on_no_match(pos1, pos2, true_cls1, true_cls2):
-    """true_cls1/true_cls2 come from the referee's no_match response and are
-    still golden truth on the wire for now, but deliberately UNUSED here --
-    self-correcting board_memory from the answer key defeats the point of
-    the vision challenge. If your model misread a card, catch it by letting
-    that position get re-observed naturally (e.g. via a future
+def on_no_match(pos1, pos2):
+    """The referee's no_match response deliberately doesn't carry the real
+    classes at pos1/pos2 -- if your model misread a card, catch it by
+    letting that position get re-observed naturally (e.g. via a future
     card_revealed), not by reading the answer off a wrong guess."""
 ```
 
@@ -621,8 +629,8 @@ def choose_pair(board_memory, matched_positions, all_positions):
         return unrevealed[0], unrevealed[1]
 
     # Board fully revealed but nothing pairs up -- only happens after a
-    # misdetection. Retry two unmatched revealed positions so the referee's
-    # next authoritative no_match response can correct us further.
+    # misdetection. Retry two unmatched revealed positions -- one of them
+    # will get re-observed on the next card_revealed for that position.
     unmatched_revealed = [p for p in board_memory if p not in matched_positions]
     return unmatched_revealed[0], unmatched_revealed[1]
 ```
@@ -683,7 +691,7 @@ while True:
         matched_positions.update([pos1, pos2])
         # your_turn will come again automatically -- loop continues
     else:
-        on_no_match(pos1, pos2, result['cls1'], result['cls2'])
+        on_no_match(pos1, pos2)
         # a 'wait' message will arrive next; loop back to wait_for('your_turn', ...)
 ```
 
@@ -803,20 +811,20 @@ join_competition(client, MASTER_ID, TEAM_SECRET)
 
 ## 15. FAQ
 
-**Q: Our score changed on what looked like "nothing happening" (a timeout or
-decline). Is that a bug?**
-No — the response-time tier applies even to timeouts and declines now (see
-[Section 6](#6-scoring)).
+**Q: Our score dropped after a timeout even though we didn't do anything
+wrong. Is that a bug?**
+No — a full timeout is a flat penalty (see [Section 6](#6-scoring)), not a
+neutral do-nothing. A correct decline, on the other hand, always scores
+exactly 0 — if your score changed after a decline, something else moved it
+(check the log for what else happened that turn).
 
 **Q: Can we mix `flip` and `flip_both` in the same turn?**
 No — pick one per turn. `flip_both` only works as your turn's first action.
 
 **Q: What happens if our vision model misdetects a card?**
 You'll get a `no_match` (or a wrong `match` claim penalty). The response
-still includes the true classes on the wire for now, but don't build your
-strategy around it — the reference client deliberately ignores it, and a
-future referee update is expected to stop sending it. Catch a misdetection
-by re-observing that position yourself the next time it comes up, not by
+deliberately doesn't include the true classes — catch a misdetection by
+re-observing that position yourself the next time it comes up, not by
 reading the answer off a wrong guess.
 
 **Q: Does Genesis affect our score if a call fails?**
