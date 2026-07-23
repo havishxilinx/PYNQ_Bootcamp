@@ -9,6 +9,19 @@ use std::time::Duration;
 /// stale doc, not the real implementation).
 const SCENE: &str = "competition_card_flip";
 
+/// Default timeout for ordinary admin calls (e.g. `admin_stop_competition`),
+/// which just flip a flag server-side and return immediately.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// `admin_start_competition` isn't a simple flag flip -- it builds an
+/// entire physics scene server-side first (backend/GPU init, loading the
+/// robot models, laying out the card grid) before responding, which can
+/// easily take longer than a few seconds, especially on a cold start.
+/// Genesis's own HTTP server is single-threaded, so a timeout here doesn't
+/// even stop that work -- it just means the referee gives up waiting and
+/// wrongly treats a still-in-progress build as a failure.
+const SCENE_BUILD_TIMEOUT: Duration = Duration::from_secs(45);
+
 /// HTTP client for the separately-owned Genesis simulated-arm server.
 /// Purely cosmetic: every method here swallows all failures (network
 /// errors, non-2xx responses, unexpected JSON, or a body-level
@@ -78,7 +91,8 @@ impl GenesisClient {
                 "card_layout": { "grid": build_card_layout(grid) },
             },
         });
-        self.post_action("admin_start_competition", &body).is_some()
+        self.post_action("admin_start_competition", &body, SCENE_BUILD_TIMEOUT)
+            .is_some()
     }
 
     /// Stops Genesis's competition scene at match end. Never lets a
@@ -89,7 +103,8 @@ impl GenesisClient {
             "token": Value::Null,
             "params": { "password": admin_password },
         });
-        let _ = self.post_action("admin_stop_competition", &body); // no response body needed, just best-effort delivery
+        // no response body needed, just best-effort delivery
+        let _ = self.post_action("admin_stop_competition", &body, DEFAULT_TIMEOUT);
     }
 
     /// Shared request/response handling for both actions: posts `body`,
@@ -101,8 +116,8 @@ impl GenesisClient {
     /// checked first as a defensive layer against a misbehaving
     /// intermediary (e.g. a reverse proxy returning a real 5xx), which
     /// the real server itself will never produce.
-    fn post_action(&self, action_name: &str, body: &Value) -> Option<Value> {
-        let response = match self.http.post(&self.base_url).json(body).send() {
+    fn post_action(&self, action_name: &str, body: &Value, timeout: Duration) -> Option<Value> {
+        let response = match self.http.post(&self.base_url).timeout(timeout).json(body).send() {
             Ok(response) => response,
             Err(err) => {
                 eprintln!(

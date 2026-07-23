@@ -185,13 +185,6 @@ fn run_one_match(
     } else {
         genesis
     };
-    // `None` whenever Genesis isn't configured for this arena (or this is
-    // a practice match) -- also `None` if the configured Genesis server
-    // predates the competition-mode streaming fix, since the resulting
-    // URL simply 404s and the arena UI hides the video zone on a broken
-    // image rather than erroring.
-    let genesis_stream_url =
-        genesis.and_then(|g| g.competition_stream_url(genesis_stream_port));
     // Order teams so the puzzle-race winner goes first (GameState always
     // starts with teams[0] active) -- for a practice match this is always
     // team_a, since `wait_for_assignment` sets `first_turn_team` to it.
@@ -206,9 +199,16 @@ fn run_one_match(
             (assignment.team_a.clone(), assignment.team_a_id.clone()),
         ]
     };
-    if let Some(g) = genesis {
-        g.start_competition(genesis_admin_password, &grid);
-    }
+    // `None` whenever Genesis isn't configured for this arena (or this is
+    // a practice match), OR `admin_start_competition` didn't actually
+    // succeed -- e.g. it raced a slow scene build past the HTTP timeout,
+    // or the server predates the competition-mode streaming fix. Only
+    // advertise the stream URL to the frontend once Genesis has confirmed
+    // the session it points at actually exists; otherwise the arena UI
+    // would show a permanent "Session Not Found" placeholder for the
+    // whole match instead of just hiding the video zone.
+    let genesis_stream_url = genesis.filter(|g| g.start_competition(genesis_admin_password, &grid))
+        .and_then(|g| g.competition_stream_url(genesis_stream_port));
     let mut state = GameState::new(teams.clone(), grid);
 
     let team_names: Vec<String> = teams.iter().map(|(name, _)| name.clone()).collect();
@@ -420,7 +420,9 @@ fn run_one_match(
 ///
 /// `genesis_stream_url` is computed once per match (not per report) in
 /// `run_one_match` and threaded through unchanged -- it only depends on
-/// whether Genesis is configured for this arena, not on live game state.
+/// whether Genesis is configured for this arena AND actually confirmed the
+/// competition session it points at (see `run_one_match`'s
+/// `genesis.filter(|g| g.start_competition(...))`), not on live game state.
 /// It was dropped entirely once GridMind switched to competition mode
 /// (standard-mode's per-session stream token doesn't exist in competition
 /// mode), and is only back now that Genesis's own `admin_start_competition`
