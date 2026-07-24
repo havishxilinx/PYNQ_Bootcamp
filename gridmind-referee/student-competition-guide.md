@@ -164,9 +164,8 @@ speed bonus:
 | 41–80s | 0 |
 | 81–120s | −2 |
 
-The first bracket is 40 seconds wide, not 20 — the first 20 seconds of
-every action are treated as unavoidable physical-flip/camera overhead and
-don't count against you.
+The first bracket runs a full 40 seconds so you have time for the card to
+be physically flipped and detected before the clock pressure kicks in.
 
 **Total for a correct match = streak bonus + speed bonus.** A fast 1st
 match nets `1 + 2 = 3`. A 3rd match in a row done in the 41–80s bracket
@@ -207,9 +206,17 @@ score is currently above 0. You get back **two small digit images**
 not text. Read them yourself (row letters map to numbers the same way as
 everywhere else: A=1, B=2...). If your request is outside those conditions
 (score too low, already used both attempts, unknown/mistyped object name —
-matching is case-sensitive), it's either silently ignored (no cost) or
-rejected with a reason (still costs the point — see
-[Section 12](#12-wire-protocol-reference) for the exact rejection reasons).
+matching is case-sensitive), the referee responds one of two ways:
+
+- **Ignored, no cost** — your score is currently 0 or below, or you've
+  already used both hint attempts this match. No `hint_response` or
+  `hint_rejected` message arrives at all; you just don't hear back.
+- **Rejected with a reason, still costs the point** — your score and hint
+  count were both fine, but the object itself didn't qualify: an unknown
+  object name, or one that's already fully revealed (both its cards
+  already flipped). Check the `hint_rejected` message's reason to see
+  which — see [Section 12](#12-wire-protocol-reference) for the exact
+  rejection reasons.
 
 **You can request a hint two ways, and both are fully supported:**
 
@@ -255,7 +262,7 @@ not competitive.
    its own from `game_start` to `game_over`.
 2. **A correct match keeps your turn.** Keep flipping until you get a wrong
    claim or the match ends.
-3. **A wrong claim costs a flat 2 points, regardless of speed, and ends
+3. **A wrong claim scores a flat −2, regardless of speed, and ends
    your turn immediately.**
 4. **Both teams receive every card reveal, regardless of whose turn it
    was.** Use that information — it's free.
