@@ -3,10 +3,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 /// The only scene in Genesis's real API matching GridMind's game --
-/// confirmed against the real server source (`scenes/competition_card_flip.py`)
-/// to be a 6-row x 5-col grid (30 cells, 15 pairs), matching GridMind's own
-/// grid sizes exactly (earlier "4x5 mismatch" concerns were based on a
-/// stale doc, not the real implementation).
+/// `scenes/competition_card_flip.py` builds a 5-row x 6-col grid (30 cells,
+/// 15 pairs), matching GridMind's own grid shape (5 letter-rows x 6
+/// numeric-cols) exactly, so `build_card_layout` needs no reshaping.
 const SCENE: &str = "competition_card_flip";
 
 /// Default timeout for ordinary admin calls (e.g. `admin_stop_competition`),
@@ -162,11 +161,9 @@ impl GenesisClient {
 /// for every grid file that exists today, since each one uses a single
 /// uppercase letter row and a single-digit column -- this would silently
 /// misorder if a future grid ever used a column >= 10, e.g. "A10" sorting
-/// before "A2"), then deliberately reshape into Genesis's mirror-transposed
-/// fixed 6-row x 5-col scene layout (same 30 cells, rows/cols swapped).
-/// Cell count matches so every name-pair from the real grid survives --
-/// only exact spatial position doesn't carry over, which doesn't matter
-/// for a memory-matching game's correctness. If a grid ever has a
+/// before "A2") and chunk by row width -- Genesis's own scene is also a
+/// 5-row x 6-col grid, so each name lands at the exact same [row][col] it
+/// occupies in GridMind, no reshaping needed. If a grid ever has a
 /// different cell count (e.g. the 2x4/3x5 dev-fixture grids), Genesis's
 /// own layout validation already rejects a mismatched cell count and
 /// falls back to a random layout -- no special-casing needed here.
@@ -174,7 +171,7 @@ fn build_card_layout(grid: &HashMap<String, String>) -> Vec<Vec<String>> {
     let mut positions: Vec<&String> = grid.keys().collect();
     positions.sort();
     let names: Vec<String> = positions.iter().map(|pos| grid[*pos].clone()).collect();
-    names.chunks(5).map(|chunk| chunk.to_vec()).collect()
+    names.chunks(6).map(|chunk| chunk.to_vec()).collect()
 }
 
 #[cfg(test)]
@@ -334,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn build_card_layout_reshapes_a_thirty_cell_grid_into_six_rows_of_five() {
+    fn build_card_layout_keeps_the_grids_natural_five_rows_of_six() {
         let grid: HashMap<String, String> = (0..30)
             .map(|i| {
                 let row = (b'A' + (i / 6) as u8) as char;
@@ -343,9 +340,14 @@ mod tests {
             })
             .collect();
         let layout = build_card_layout(&grid);
-        assert_eq!(layout.len(), 6);
+        assert_eq!(layout.len(), 5);
         for row in &layout {
-            assert_eq!(row.len(), 5);
+            assert_eq!(row.len(), 6);
         }
+        // Each name lands at the same [row][col] GridMind itself uses --
+        // no transpose, e.g. "A1" (row 0, col 0) is "obj0".
+        assert_eq!(layout[0][0], "obj0");
+        assert_eq!(layout[0][5], "obj5");
+        assert_eq!(layout[4][0], "obj24");
     }
 }
