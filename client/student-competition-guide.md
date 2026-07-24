@@ -35,6 +35,14 @@ planning doc, slide, or Confluence page.
 
 ## 1. Overview
 
+**This year's theme is Physical AI.** Most AI you've used lives inside a
+screen — a chatbot, a game, a recommendation. Physical AI is different: it
+uses a camera to see the real world, code to think about what it sees, and
+then actually does something about it. No screen in between. GridMind is
+your team's hands-on Physical AI project: your board's camera is its eyes,
+your code is its brain, and the moves it reports to the referee are its
+hands — the referee is the only one who actually touches the real cards.
+
 GridMind is a two-team AI card-matching competition. A grid of face-down
 cards sits between two teams; each object appears on exactly two cards
 (a classic memory-match game). Each team's board runs its own vision
