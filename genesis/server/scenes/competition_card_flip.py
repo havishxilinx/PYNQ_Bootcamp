@@ -15,7 +15,9 @@ def setup(scene, card_layout=None):
     Layout:
     - Red robot on LEFT side, facing +X toward grid
     - Blue robot on RIGHT side, facing -X toward grid
-    - 6x5 grid of cards in the middle (30 cards, 15 color pairs)
+    - 5x6 grid of cards in the middle (30 cards, 15 color pairs) -- matches
+      GridMind's own grid shape (5 letter-rows x 6 numeric-cols) directly,
+      so the admin-supplied card_layout needs no reshaping on either side.
 
     Each card position has TWO stacked boxes:
     - Bottom: Colored card (fixed=True) - the actual color to reveal
@@ -42,8 +44,8 @@ def setup(scene, card_layout=None):
     colored_thickness = 0.005   # 5mm colored card (bottom layer)
     cover_thickness = 0.04      # 40mm gray cover (same as working cube example)
     card_spacing = 0.10         # 10cm between card centers (tightened for reach)
-    grid_cols = 5
-    grid_rows = 6
+    grid_cols = 6
+    grid_rows = 5
     grid_width = grid_cols * card_spacing   # 0.50m (X span between robots - smaller = easier reach)
     grid_height = grid_rows * card_spacing  # 0.60m (Y span)
 
@@ -131,10 +133,10 @@ def setup(scene, card_layout=None):
 
     # ------------------------------------------------------------------
     # Determine each cell's color_idx: either from an admin-supplied
-    # layout (a 6x5 grid of NAMES) or, if none/invalid, a random shuffle.
+    # layout (a 5x6 grid of NAMES) or, if none/invalid, a random shuffle.
     #
     # card_layout format (admin-authored):
-    #   {"grid": [[name, name, ...5...], ...6 rows...]}
+    #   {"grid": [[name, name, ...6...], ...5 rows...]}
     # or just the bare 2D list [[name,...],...]. Each unique name is
     # assigned a stable color_idx by first appearance. To play as a
     # memory game every name should appear exactly twice, but that is
