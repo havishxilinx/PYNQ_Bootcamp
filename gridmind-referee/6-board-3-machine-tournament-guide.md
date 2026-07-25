@@ -75,7 +75,7 @@ export GENESIS_PORT=9002
 export GENESIS_STREAM_PORT=8080
 export GENESIS_BACKEND=cpu       # or amdgpu if this machine has a working ROCm torch install
 export GENESIS_SHOW_VIEWER=false # disables Genesis's own native GUI window, not the web stream
-export GENESIS_ADMIN_PASSWORD=admin123
+export GENESIS_ADMIN_PASSWORD=<choose-a-strong-password>  # no default anymore -- required
 python scripts/run_server.py
 ```
 
@@ -83,7 +83,7 @@ python scripts/run_server.py
 ```bash
 ./gridmind-referee arena --server <machine-1-ip>:35050 --key <event-key> \
   --id arena-1-referee --master-id master-referee --arena-num 1 \
-  --genesis-url http://<machine-2-ip>:9002 --genesis-admin-password admin123 \
+  --genesis-url http://<machine-2-ip>:9002 --genesis-admin-password <same-password-as-genesis-1's-GENESIS_ADMIN_PASSWORD> \
   --genesis-stream-port 8080
 ```
 
@@ -97,7 +97,7 @@ Identical to Machine 2, with `--arena-num 2` / `--id arena-2-referee`, using Mac
 ```bash
 ./gridmind-referee arena --server <machine-1-ip>:35050 --key <event-key> \
   --id arena-2-referee --master-id master-referee --arena-num 2 \
-  --genesis-url http://<machine-3-ip>:9002 --genesis-admin-password admin123 \
+  --genesis-url http://<machine-3-ip>:9002 --genesis-admin-password <same-password-as-genesis-1's-GENESIS_ADMIN_PASSWORD> \
   --genesis-stream-port 8080
 ```
 Open `http://<machine-1-ip>:38800/arena?arena=2` on/near this machine.

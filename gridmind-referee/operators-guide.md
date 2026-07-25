@@ -251,6 +251,14 @@ Match controls in Step 6):
   liberally — this is the right first move for almost any mid-match problem.
 - **Set Score** — directly overwrites one team's score to an absolute value.
   For correcting a scoring dispute, not for normal play.
+- **Reset Genesis / Restart Genesis / Stop Genesis** (only shown when Genesis
+  is configured for this arena) — cosmetic-only, never affects the real
+  match's score, timer, or pairs. **Reset** re-covers all cards and zeroes
+  Genesis's own scores without rebuilding the scene (fastest option; requires
+  a Genesis server new enough to support it, or it silently no-ops). **Restart**
+  fully rebuilds the scene from scratch (stop then start) — use this if the
+  video feed is frozen or visually wrong. **Stop** just halts the
+  visualization, e.g. to free the GPU if nobody's watching it.
 - **Finish Now** — ends the match immediately, crediting whoever's currently
   ahead (same tie-break as a natural finish). The tournament schedule
   advances exactly as if the match had ended normally, and the live
