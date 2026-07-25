@@ -21,7 +21,7 @@ Every step below reflects the current referee behavior, including: the pregame c
         |                                                       |
    Machine 2                                              Machine 3
    Arena 1 (arena-1-referee)                          Arena 2 (arena-2-referee)
-   Genesis 1: API :9002, stream :8080                 Genesis 2: API :9002, stream :8080
+   Genesis 1: API :9002, stream :9005                 Genesis 2: API :9002, stream :9005
         |                                                       |
    Team A's board  <---- shared physical grid ---->  Team D's board
    Team B's board       (Arena 1's table)             Team E's board
@@ -30,14 +30,14 @@ Every step below reflects the current referee behavior, including: the pregame c
 
 Each arena is a **shared physical table** two teams play at simultaneously — one human referee per arena physically flips cards on request; the same physical grid is what both connected boards' cameras look at. Six boards total, three per pool, matches assigned two at a time (one per arena) so the tournament runs in parallel across both arenas.
 
-**Network requirement:** all 3 machines and all 6 boards must be able to reach Machine 1's IP on port 35050 (broker) and 38800 (web UI). Each board additionally needs to reach whichever arena's Genesis machine it's assigned to, on ports 9002 and 8080.
+**Network requirement:** all 3 machines and all 6 boards must be able to reach Machine 1's IP on port 35050 (broker) and 38800 (web UI). Each board additionally needs to reach whichever arena's Genesis machine it's assigned to, on ports 9002 and 9005.
 
 ## Part 1 — Server setup
 
 ### Machine 1 — Broker + Master
 
 ```bash
-git clone git@github.com-personal:havishxilinx/PYNQ_Bootcamp.git gridmind-tournament
+git clone https://github.com/Xilinx/PYNQ_Bootcamp.git gridmind-tournament
 cd gridmind-tournament
 git checkout gridmind-package
 cd server
@@ -72,7 +72,7 @@ Get Machine 2's own LAN IP first (`ip -4 addr show`, call it `<machine-2-ip>`) �
 cd server/genesis
 python3 -m venv venv && source venv/bin/activate && pip install -e .
 export GENESIS_PORT=9002
-export GENESIS_STREAM_PORT=8080
+export GENESIS_STREAM_PORT=9005
 export GENESIS_BACKEND=cpu       # or amdgpu if this machine has a working ROCm torch install
 export GENESIS_SHOW_VIEWER=false # disables Genesis's own native GUI window, not the web stream
 export GENESIS_ADMIN_PASSWORD=<choose-a-strong-password>  # no default anymore -- required
@@ -84,7 +84,7 @@ python scripts/run_server.py
 ./gridmind-referee arena --server <machine-1-ip>:35050 --key <event-key> \
   --id arena-1-referee --master-id master-referee --arena-num 1 \
   --genesis-url http://<machine-2-ip>:9002 --genesis-admin-password <same-password-as-genesis-1's-GENESIS_ADMIN_PASSWORD> \
-  --genesis-stream-port 8080
+  --genesis-stream-port 9005
 ```
 
 **Important:** use `<machine-2-ip>`, not `127.0.0.1`, for `--genesis-url` even though Genesis is on this same machine — that exact string gets forwarded to student boards (for their own `pynqsim` connection) and used to build the browser-facing video stream URL. Loopback would be unreachable from anywhere else.
@@ -98,7 +98,7 @@ Identical to Machine 2, with `--arena-num 2` / `--id arena-2-referee`, using Mac
 ./gridmind-referee arena --server <machine-1-ip>:35050 --key <event-key> \
   --id arena-2-referee --master-id master-referee --arena-num 2 \
   --genesis-url http://<machine-3-ip>:9002 --genesis-admin-password <same-password-as-genesis-1's-GENESIS_ADMIN_PASSWORD> \
-  --genesis-stream-port 8080
+  --genesis-stream-port 9005
 ```
 Open `http://<machine-1-ip>:38800/arena?arena=2` on/near this machine.
 

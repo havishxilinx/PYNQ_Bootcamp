@@ -49,7 +49,7 @@ Set before starting server:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GENESIS_PORT` | 9002 | API port |
-| `GENESIS_STREAM_PORT` | 8080 | Video streaming port |
+| `GENESIS_STREAM_PORT` | 9005 | Video streaming port |
 | `GENESIS_BACKEND` | amdgpu | Use `cpu` if GPU fails |
 | `GENESIS_ADMIN_PASSWORD` | *(none)* | Admin password -- if unset, a random one-time password is generated and printed at server startup |
 
@@ -121,7 +121,7 @@ sim.admin_stop_competition(password="<GENESIS_ADMIN_PASSWORD>")
 
 ## Live Viewer
 
-Open in browser: `http://<server-ip>:8080`
+Open in browser: `http://<server-ip>:9005`
 
 ## Adding Custom Scenes
 

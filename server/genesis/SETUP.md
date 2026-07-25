@@ -7,7 +7,7 @@ Complete setup instructions for running the Genesis simulation server with integ
 The Genesis server runs **two services on one machine**:
 
 1. **Main API Server** (port 9002) - Handles robot control commands via HTTP JSON API
-2. **Video Streaming Server** (port 8080) - Provides live MJPEG video streams of simulations
+2. **Video Streaming Server** (port 9005) - Provides live MJPEG video streams of simulations
 
 Both run simultaneously in the same Python process, sharing the simulation state.
 
@@ -25,7 +25,7 @@ Both run simultaneously in the same Python process, sharing the simulation state
 │  │  └────────────────────────────────┘ │  │
 │  │                                      │  │
 │  │  ┌────────────────────────────────┐ │  │
-│  │  │ Flask Stream Server (port 8080)│ │  │
+│  │  │ Flask Stream Server (port 9005)│ │  │
 │  │  │  - MJPEG video streaming       │ │  │
 │  │  │  - Web viewer UI               │ │  │
 │  │  └────────────────────────────────┘ │  │
@@ -86,7 +86,7 @@ rocm-smi
 ### Step 1: Clone or Navigate to Server Directory
 
 ```bash
-cd /home/trabalgi/workspace/dev/bootcamp/PYNQ_Bootcamp_Final/genesis/server
+cd <path-to-genesis>
 ```
 
 ### Step 2: Create Python Virtual Environment
@@ -142,7 +142,7 @@ cat > ~/.genesis_server_config << 'EOF'
 export GENESIS_PORT=9002
 
 # Video streaming server port
-export GENESIS_STREAM_PORT=8080
+export GENESIS_STREAM_PORT=9005
 
 # Backend: cpu, gpu, cuda, amdgpu, metal
 export GENESIS_BACKEND=amdgpu
@@ -151,7 +151,7 @@ export GENESIS_BACKEND=amdgpu
 export GENESIS_SHOW_VIEWER=false
 
 # Admin password for administrative actions
-export GENESIS_ADMIN_PASSWORD=bootcamp2024
+export GENESIS_ADMIN_PASSWORD=<choose-a-strong-password>  # no default -- required
 
 # Maximum concurrent student sessions
 export GENESIS_MAX_SESSIONS=30
@@ -169,7 +169,7 @@ source ~/.genesis_server_config
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GENESIS_PORT` | 9002 | Main API server port (students connect here) |
-| `GENESIS_STREAM_PORT` | 8080 | Video streaming server port (for browser viewing) |
+| `GENESIS_STREAM_PORT` | 9005 | Video streaming server port (for browser viewing) |
 | `GENESIS_BACKEND` | amdgpu | Compute backend: `cpu`, `gpu`, `cuda`, `amdgpu`, `metal` |
 | `GENESIS_SHOW_VIEWER` | true | Show Genesis desktop viewer (disable for headless) |
 | `GENESIS_ADMIN_PASSWORD` | *(none)* | Admin password for server management -- if unset, a random one-time password is generated and printed at server startup |
@@ -186,10 +186,10 @@ ip addr show | grep "inet " | grep -v 127.0.0.1
 
 # Allow ports through firewall
 sudo ufw allow 9002/tcp   # Main API
-sudo ufw allow 8080/tcp   # Video streaming
+sudo ufw allow 9005/tcp   # Video streaming
 
 # For institutional networks, coordinate with IT to:
-# - Open ports 9002 and 8080
+# - Open ports 9002 and 9005
 # - Ensure students' subnet can reach server IP
 ```
 
@@ -199,7 +199,7 @@ sudo ufw allow 8080/tcp   # Video streaming
 
 ```bash
 # Activate virtual environment
-cd /home/trabalgi/workspace/dev/bootcamp/PYNQ_Bootcamp_Final/genesis/server
+cd <path-to-genesis>
 source venv/bin/activate
 
 # Load configuration (if using config file)
@@ -224,14 +224,14 @@ python -m genesis_server.server
 ===================================================
   Available IPs:
     - Main API: http://192.168.1.100:9002
-    - Stream: http://192.168.1.100:8080
+    - Stream: http://192.168.1.100:9005
   Backend    : amdgpu
   Viewer     : disabled
 ===================================================
   Example: SimulationClient("192.168.1.100", 9002)
 ===================================================
 
-  Stream Server: http://localhost:8080
+  Stream Server: http://localhost:9005
 ===================================================
 
   Server running. Press Ctrl+C to stop.
@@ -258,7 +258,7 @@ curl -X POST http://localhost:9002 \
 
 ```bash
 # Open in browser:
-# http://SERVER_IP:8080
+# http://SERVER_IP:9005
 
 # You should see a web interface listing active sessions
 ```
@@ -278,7 +278,7 @@ sim.create_environment(scene="pick_and_place")
 print("Environment created!")
 
 # Get streaming URL
-print(f"View at: http://192.168.1.100:8080")
+print(f"View at: http://192.168.1.100:9005")
 
 # Test robot movement
 sim.move_robot(0, position=[0.5, 0.0, 0.6], smooth=True, num_waypoints=50)
@@ -315,16 +315,17 @@ After=network.target
 
 [Service]
 Type=simple
-User=trabalgi
-WorkingDirectory=/home/trabalgi/workspace/dev/bootcamp/PYNQ_Bootcamp_Final/genesis/server
+User=<your-username>
+WorkingDirectory=<path-to-genesis>
 Environment="GENESIS_PORT=9002"
-Environment="GENESIS_STREAM_PORT=8080"
+Environment="GENESIS_STREAM_PORT=9005"
 Environment="GENESIS_BACKEND=amdgpu"
 Environment="GENESIS_SHOW_VIEWER=false"
-Environment="GENESIS_ADMIN_PASSWORD=bootcamp2024"
+# No default password -- required, choose a strong one:
+Environment="GENESIS_ADMIN_PASSWORD=<choose-a-strong-password>"
 Environment="GENESIS_MAX_SESSIONS=30"
 Environment="GENESIS_SESSION_TIMEOUT=7200"
-ExecStart=/home/trabalgi/workspace/dev/bootcamp/PYNQ_Bootcamp_Final/genesis/server/venv/bin/python scripts/run_server.py
+ExecStart=<path-to-genesis>/venv/bin/python scripts/run_server.py
 Restart=always
 RestartSec=10
 
@@ -362,7 +363,7 @@ screen -S genesis-server
 
 # Load config and run server
 source ~/.genesis_server_config
-cd /home/trabalgi/workspace/dev/bootcamp/PYNQ_Bootcamp_Final/genesis/server
+cd <path-to-genesis>
 source venv/bin/activate
 python scripts/run_server.py
 
@@ -380,7 +381,7 @@ curl http://localhost:9002 -X POST \
   -H "Content-Type: application/json" \
   -d '{
     "action": "admin_get_status",
-    "params": {"password": "bootcamp2024"}
+    "params": {"password": "<GENESIS_ADMIN_PASSWORD>"}
   }' | python -m json.tool
 ```
 
@@ -397,7 +398,7 @@ watch -n 1 nvidia-smi
 watch -n 1 rocm-smi
 
 # Network connections
-watch -n 1 'netstat -an | grep ":9002\|:8080" | wc -l'
+watch -n 1 'netstat -an | grep ":9002\|:9005" | wc -l'
 ```
 
 ### Server Logs
@@ -442,7 +443,7 @@ watch -n 5 'netstat -an | grep :9002 | grep ESTABLISHED | wc -l'
 journalctl -u genesis-server -f
 
 # Check video stream health
-curl http://localhost:8080/health
+curl http://localhost:9005/health
 ```
 
 ## Troubleshooting
@@ -453,7 +454,7 @@ curl http://localhost:8080/health
 ```bash
 # Find what's using the port
 sudo lsof -i :9002
-sudo lsof -i :8080
+sudo lsof -i :9005
 
 # Kill the process
 sudo kill -9 <PID>
@@ -498,12 +499,12 @@ curl http://localhost:9002
 
 ```bash
 # Check stream server is running
-curl http://localhost:8080/health
+curl http://localhost:9005/health
 
 # Should return: {"status": "ok", ...}
 
 # Check if student session exists
-# Browse to http://SERVER_IP:8080 to see active sessions
+# Browse to http://SERVER_IP:9005 to see active sessions
 ```
 
 **Problem**: Stream is slow/laggy
@@ -544,7 +545,7 @@ SERVER_PORT = 9002           # Main API port
 ### For Video Streaming
 
 ```
-Open browser to: http://192.168.1.100:8080
+Open browser to: http://192.168.1.100:9005
 
 After running sim.create_environment(), you'll see your 
 session appear in the list. Click it to watch your robot!
@@ -594,7 +595,7 @@ For issues specific to:
 
 ```bash
 # Start server
-cd /home/trabalgi/workspace/dev/bootcamp/PYNQ_Bootcamp_Final/genesis/server
+cd <path-to-genesis>
 source venv/bin/activate
 source ~/.genesis_server_config
 python scripts/run_server.py
@@ -604,7 +605,7 @@ curl -X POST http://localhost:9002 -H "Content-Type: application/json" \
   -d '{"action": "create_env", "params": {"scene": "pick_and_place"}}'
 
 # View streams
-# Open browser: http://SERVER_IP:8080
+# Open browser: http://SERVER_IP:9005
 
 # Stop server
 # Press Ctrl+C (if running manually)

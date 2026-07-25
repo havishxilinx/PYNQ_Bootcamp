@@ -12,7 +12,7 @@ Get your Genesis server running in 5 minutes.
 
 ```bash
 # 1. Navigate to server directory
-cd /home/trabalgi/workspace/dev/bootcamp/PYNQ_Bootcamp_Final/genesis/server
+cd <path-to-genesis>
 
 # 2. Create virtual environment
 python3 -m venv venv
@@ -27,11 +27,11 @@ pip install -e .
 ```bash
 # Set essential environment variables
 export GENESIS_PORT=9002              # API port
-export GENESIS_STREAM_PORT=8080       # Video streaming port
+export GENESIS_STREAM_PORT=9005       # Video streaming port
 export GENESIS_BACKEND=cpu            # or: cuda, amdgpu, gpu
 export GENESIS_SHOW_VIEWER=false      # Disable GUI on headless server
 export GENESIS_MAX_SESSIONS=30        # Max students
-export GENESIS_ADMIN_PASSWORD=bootcamp2024
+export GENESIS_ADMIN_PASSWORD=<choose-a-strong-password>  # no default -- required
 ```
 
 ## Run Server
@@ -52,7 +52,7 @@ You should see:
 ===================================================
   Available IPs:
     - Main API: http://192.168.1.100:9002
-    - Stream: http://192.168.1.100:8080
+    - Stream: http://192.168.1.100:9005
   Backend    : cpu
   Viewer     : disabled
 ===================================================
@@ -73,7 +73,7 @@ curl -X POST http://localhost:9002 \
 
 ### Test 2: Video Stream
 
-Open browser to: `http://YOUR_SERVER_IP:8080`
+Open browser to: `http://YOUR_SERVER_IP:9005`
 
 You should see the Genesis Live Viewer interface.
 
@@ -86,14 +86,14 @@ SERVER_IP = "192.168.1.100"  # Your actual server IP from startup output
 SERVER_PORT = 9002
 ```
 
-Video stream URL: `http://192.168.1.100:8080`
+Video stream URL: `http://192.168.1.100:9005`
 
 ## Firewall Setup
 
 ```bash
 # Allow required ports
 sudo ufw allow 9002/tcp  # API
-sudo ufw allow 8080/tcp  # Video
+sudo ufw allow 9005/tcp  # Video
 ```
 
 ## Troubleshooting
@@ -101,7 +101,7 @@ sudo ufw allow 8080/tcp  # Video
 **Port already in use?**
 ```bash
 sudo lsof -i :9002
-sudo lsof -i :8080
+sudo lsof -i :9005
 # Kill the process using the port
 ```
 
@@ -145,7 +145,7 @@ Student Laptop               Server Machine
 │             │   9002      │  API Server          │
 │ Jupyter ────┼────────────►│  (Robot control)     │
 │ Notebook    │             │                      │
-│             │   8080      │  Stream Server       │
+│             │   9005      │  Stream Server       │
 │ Browser ────┼────────────►│  (Live video)        │
 └─────────────┘             └──────────────────────┘
 ```

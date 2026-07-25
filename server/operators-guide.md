@@ -75,7 +75,7 @@ Open:
   --id arena-2-referee --master-id master-referee --arena-num 2
 ```
 If this arena has a Genesis simulated-arm server co-located with it, add
-`--genesis-url http://127.0.0.1:9005` (its address) and
+`--genesis-url http://127.0.0.1:9002` (its address) and
 `--genesis-admin-password <password>` matching that Genesis server's own
 `GENESIS_ADMIN_PASSWORD` -- required whenever `--genesis-url` is set, there's
 no default password (Genesis itself generates and prints a random one-time
@@ -87,7 +87,7 @@ outage or misconfiguration never affects the real match or score.
 
 If that Genesis server also runs its separate live-viewer/stream process
 on a non-default port, add `--genesis-stream-port <port>` (defaults to
-Genesis's own default, `8080`) — the arena UI (`/arena?arena=N`) then
+Genesis's own default, `9005`) — the arena UI (`/arena?arena=N`) then
 embeds a live video feed of the match automatically. This requires a
 Genesis server running the competition-mode streaming fix (registers its
 simulation under a fixed `"competition"` key); against an unpatched
