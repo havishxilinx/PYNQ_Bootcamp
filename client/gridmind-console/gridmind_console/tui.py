@@ -79,19 +79,91 @@ class GridMindApp(App):
     """Console equivalent of the notebook's Section 10 dashboard."""
 
     CSS = """
-    .panel { border: round $primary; padding: 1; margin-bottom: 1; }
-    .row { height: auto; }
-    Input { width: 1fr; margin-right: 1; }
-    Button { margin-right: 1; }
+    Screen {
+        background: $background;
+    }
+
+    Header {
+        background: #1d1a1a;
+        color: #ffffff;
+    }
+
+    TabbedContent > ContentSwitcher {
+        padding: 1 2;
+    }
+
+    Tabs {
+        background: #1d1a1a;
+    }
+
+    Tab.-active {
+        color: #d71111;
+        text-style: bold;
+    }
+
+    /* Section headers -- a plain colored label, NOT boxed. Distinct from
+       .panel (an actual bordered content/output box) so headers don't get
+       stacked box-in-a-box with the content right below them. */
+    .section-title {
+        text-style: bold;
+        color: #d71111;
+        margin: 1 0 0 0;
+        height: auto;
+    }
+
+    /* Descriptive callouts and output logs -- these genuinely benefit from
+       standing apart visually as "read this" / "results here" boxes. */
+    .panel {
+        border: round #4a4a4a;
+        padding: 1 2;
+        margin-bottom: 1;
+        background: $panel;
+    }
+
+    /* Match tab's Stage/Status -- the single most important thing on
+       screen at a glance, gets its own stronger visual treatment. */
+    .status-box {
+        border: round #d71111;
+        padding: 1 2;
+        margin-bottom: 1;
+        background: $panel;
+        text-style: bold;
+    }
+
+    .row {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    Input {
+        width: 1fr;
+        margin-right: 1;
+    }
+
+    Input:focus {
+        border: round #d71111;
+    }
+
+    Button {
+        margin-right: 1;
+        min-width: 14;
+    }
+
+    RichLog {
+        min-height: 8;
+        border: round #4a4a4a;
+    }
     """
 
     BINDINGS = [('q', 'quit', 'Quit')]
+    TITLE = 'GridMind'
 
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.match = None
         self._app_thread = None
+        self.sub_title = f'Not connected · team {config.team_name!r}'
 
     # -- layout ----------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -99,7 +171,7 @@ class GridMindApp(App):
         with TabbedContent(initial='connect'):
             with TabPane('Connect', id='connect'):
                 with VerticalScroll():
-                    yield Static('[bold]Board Clock[/bold]', classes='panel')
+                    yield Static('[bold]Board Clock[/bold]', classes='section-title')
                     with Horizontal(classes='row'):
                         yield Input(placeholder='YYYY-MM-DD HH:MM:SS', id='board_time_input')
                         yield Button('Set Board Time', id='set_time_button', variant='warning')
@@ -108,7 +180,7 @@ class GridMindApp(App):
                         yield Button('Sync From HTTP', id='sync_time_button', variant='primary')
                     yield Static('', id='board_clock_output', classes='panel')
 
-                    yield Static('[bold]Connection[/bold]', classes='panel')
+                    yield Static('[bold]Connection[/bold]', classes='section-title')
                     with Horizontal(classes='row'):
                         yield Input(value=self.config.server, id='server_input')
                         yield Input(value=self.config.broker_key, id='key_input')
@@ -179,10 +251,10 @@ class GridMindApp(App):
                         id='play_mode',
                         disabled=True,
                     )
-                    yield Static('[bold]Stage[/bold]', classes='panel')
-                    yield Static('', id='stage_display')
-                    yield Static('[bold]Status[/bold]', classes='panel')
-                    yield Static('Not connected.', id='status_display')
+                    yield Static('[bold]Stage[/bold]', classes='section-title')
+                    yield Static('', id='stage_display', classes='status-box')
+                    yield Static('[bold]Status[/bold]', classes='section-title')
+                    yield Static('Not connected.', id='status_display', classes='status-box')
                     yield Static('', id='board_display')
 
             with TabPane('Hints', id='hints'):
@@ -207,7 +279,7 @@ class GridMindApp(App):
                         yield Input(placeholder='e.g. dog', id='hint_object_input')
                         yield Button('Queue Hint', id='hint_button', variant='warning', disabled=True)
 
-                    yield Static('[bold]Manual Hint Override[/bold]', classes='panel')
+                    yield Static('[bold]Manual Hint Override[/bold]', classes='section-title')
                     with Horizontal(classes='row'):
                         yield Input(placeholder='card name, e.g. car', id='override_name_input')
                         yield Button('Start Manual Override', id='override_start_button', variant='warning')
@@ -331,6 +403,7 @@ class GridMindApp(App):
             # default), so it's safe to listen from Connect onward.
             self.match.start()
             self._log_to('connect_output', f'Connected as board {client.board_id}, team {client.team!r}.')
+            self.sub_title = f'Connected · board {client.board_id} · team {client.team!r}'
             self.query_one('#start_button', Button).disabled = False
             self.query_one('#connect_button', Button).disabled = True
             self.query_one('#disconnect_button', Button).disabled = False
@@ -345,6 +418,7 @@ class GridMindApp(App):
                 self.match.stop()
             self.match = None
             mnist_hint.match = None
+            self.sub_title = f'Not connected · team {self.config.team_name!r}'
             self.query_one('#connect_button', Button).disabled = False
             self.query_one('#disconnect_button', Button).disabled = True
             self.query_one('#start_button', Button).disabled = True

@@ -14,21 +14,56 @@ none of that infrastructure exists here.
 
 ## Setup (on the board)
 
+This needs to run as **root** with the board's own PYNQ/DPU Python
+environment, not a fresh venv built from a plain `python3`. On most
+Kria/KV260 images, Jupyter itself runs as root under `/home/root`, and the
+actual `pynq`/`pynq_dpu`/`pynqp2p`/`cv2` packages live in a *dedicated*
+venv (commonly `/usr/local/share/pynq-venv/`), separate from the system
+`python3`. Building a fresh `--system-site-packages` venv from bare
+`python3` inherits from the wrong base interpreter and silently misses
+all of those packages -- use the board's own PYNQ venv directly instead.
+
 ```bash
-cd gridmind-console
-python3 -m venv --system-site-packages .venv   # sees the board's pynq_dpu/pynq_peripherals/pynqp2p/cv2
-source .venv/bin/activate
-uv pip install textual                          # or: pip install textual, if uv isn't set up yet
+sudo -i                             # a real root shell/environment, not a one-off `sudo <cmd>`
+cd /home/root/jupyter_notebooks/.../gridmind-console   # wherever it's deployed
+
+# find the board's actual PYNQ venv if you don't already know it -- open a
+# working notebook (e.g. PYNQ 301 - Object Detection) and run this in a cell:
+#   import sys; print(sys.executable)
+# it'll print something like /usr/local/share/pynq-venv/bin/python3
+
+/usr/local/share/pynq-venv/bin/python3 -m pip install textual
 cp config.example.json config.json
 # edit config.json: server, broker_key, referee_id, team_name, team_secret, detection_approach, ...
+
+/usr/local/share/pynq-venv/bin/python3 -m gridmind_console.main
 ```
 
 Run from the same directory as your model files (`tf_yolov3_voc.xmodel`,
-`img/voc_classes.txt`, `dpu_mnist_classifier.xmodel`), same as the notebook:
+`img/voc_classes.txt`, `dpu_mnist_classifier.xmodel`), same as the notebook.
 
-```bash
-python3 -m gridmind_console.main
-```
+### Troubleshooting
+
+- **`PermissionError` extracting the vendored `pynqp2p` wheel, or
+  `ModuleNotFoundError: No module named 'pynqp2p'`** -- you're not root.
+  `main.py` bootstraps `pynqp2p` from a hardcoded `/home/root/...` path;
+  a non-root user can't write there. Use `sudo -i` (a full root shell),
+  not a one-off `sudo <single command>` -- the latter silently swaps out
+  which Python/venv gets used partway through and reintroduces this same
+  class of error for `pynq_dpu` instead.
+- **`ModuleNotFoundError: No module named 'pynq_dpu'` even as root** --
+  your venv was built from the wrong base Python. Find the board's real
+  PYNQ venv (see the `sys.executable` trick above) and use *that*
+  interpreter directly; don't build a nested `--system-site-packages`
+  venv from it either -- that flag doesn't reliably inherit an
+  intermediate venv's own installed packages, only its own base's.
+- **`xclbinutil` segfaults (`Segmentation fault (core dumped)`), surfacing
+  as `FileNotFoundError` on a `t.xclbin` temp file deep in
+  `pynq/pl_server/embedded_device.py`** -- this is a broken XRT
+  (Xilinx Runtime) install on the board, unrelated to this project
+  entirely. Confirm by trying the same `DpuOverlay(...)` cell in a
+  working notebook; if it also fails, a reboot is worth trying first,
+  otherwise this needs whoever manages the board image.
 
 ## What's different from the notebook
 
