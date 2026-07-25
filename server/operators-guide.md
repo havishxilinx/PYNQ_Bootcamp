@@ -29,6 +29,14 @@ Registration state (teams, pools, secrets, and the schedule once closed) is save
 
 ## Step 1 — Start the broker
 
+**Self-serve shortcut:** `launch-master.sh` (this same `server/` folder) starts
+the broker and Master together on one machine, on the fixed ports below,
+auto-detecting this machine's IP and clearing those ports first. Then run
+`launch-arena.sh <master-ip>` on the arena/GPU machine to start Genesis and
+both arenas. Steps 1-3 below are the manual equivalent, useful if you need to
+run these roles split across more than two machines or want to see each
+process's own terminal.
+
 The p2p broker (`server.py`, `pynqp2p` library) is distributed separately
 from this directory — **TODO(havish): fill in where organizers get it for
 event day.** Once you have it:
@@ -67,9 +75,11 @@ Open:
   --id arena-2-referee --master-id master-referee --arena-num 2
 ```
 If this arena has a Genesis simulated-arm server co-located with it, add
-`--genesis-url http://127.0.0.1:9005` (its address) and, if that Genesis
-server's `GENESIS_ADMIN_PASSWORD` differs from the default, also
-`--genesis-admin-password <password>`. Each Genesis server can only run
+`--genesis-url http://127.0.0.1:9005` (its address) and
+`--genesis-admin-password <password>` matching that Genesis server's own
+`GENESIS_ADMIN_PASSWORD` -- required whenever `--genesis-url` is set, there's
+no default password (Genesis itself generates and prints a random one-time
+password at startup if you don't set one). Each Genesis server can only run
 one active competition at a time — never point two arenas at the same
 Genesis server. Genesis is purely cosmetic: teams' boards each join its
 competition scene and get real per-flip arm animation, but a Genesis
@@ -251,6 +261,14 @@ Match controls in Step 6):
   liberally — this is the right first move for almost any mid-match problem.
 - **Set Score** — directly overwrites one team's score to an absolute value.
   For correcting a scoring dispute, not for normal play.
+- **Reset Genesis / Restart Genesis / Stop Genesis** (only shown when Genesis
+  is configured for this arena) — cosmetic-only, never affects the real
+  match's score, timer, or pairs. **Reset** re-covers all cards and zeroes
+  Genesis's own scores without rebuilding the scene (fastest option; requires
+  a Genesis server new enough to support it, or it silently no-ops). **Restart**
+  fully rebuilds the scene from scratch (stop then start) — use this if the
+  video feed is frozen or visually wrong. **Stop** just halts the
+  visualization, e.g. to free the GPU if nobody's watching it.
 - **Finish Now** — ends the match immediately, crediting whoever's currently
   ahead (same tie-break as a natural finish). The tournament schedule
   advances exactly as if the match had ended normally, and the live
