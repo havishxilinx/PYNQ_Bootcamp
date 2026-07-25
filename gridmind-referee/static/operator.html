@@ -387,6 +387,18 @@ function adminSetScore(arenaNum, team) {
 function adminPause(arenaNum) { postAdmin('pause', { arena: arenaNum }); }
 function adminResume(arenaNum) { postAdmin('resume', { arena: arenaNum }); }
 
+function adminGenesisStop(arenaNum) { postAdmin('genesis-stop', { arena: arenaNum }); }
+
+function adminGenesisRestart(arenaNum) {
+  if (!confirm(`Restart the Genesis visualization on Arena ${arenaNum}? The match itself (score, timer, pairs) is not affected.`)) return;
+  postAdmin('genesis-restart', { arena: arenaNum });
+}
+
+function adminGenesisReset(arenaNum) {
+  if (!confirm(`Reset the Genesis board on Arena ${arenaNum} (re-cover all cards, zero its scores)? The match itself (score, timer, pairs) is not affected. Requires a Genesis server with admin_reset_board support.`)) return;
+  postAdmin('genesis-reset', { arena: arenaNum });
+}
+
 function adminStop(arenaNum) {
   if (!confirm(`Stop this match on Arena ${arenaNum}? No result will be recorded -- you will need to re-trigger the same matchup to replay it.`)) return;
   postAdmin('stop', { arena: arenaNum });
@@ -570,6 +582,11 @@ function renderAdminPanel(arenaNum, liveState) {
       ${liveState.is_paused
         ? `<button onclick="adminResume(${arenaNum})">Resume</button>`
         : `<button onclick="adminPause(${arenaNum})">Pause</button>`}
+      ${liveState.genesis_configured
+        ? `<button onclick="adminGenesisReset(${arenaNum})">Reset Genesis</button>
+      <button onclick="adminGenesisRestart(${arenaNum})">Restart Genesis</button>
+      <button onclick="adminGenesisStop(${arenaNum})">Stop Genesis</button>`
+        : ''}
       <button class="danger" onclick="adminStop(${arenaNum})">Stop (void)</button>
       <button class="danger" onclick="adminFinish(${arenaNum})">Finish Now</button>
     </div>

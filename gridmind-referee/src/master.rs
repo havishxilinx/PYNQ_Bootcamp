@@ -416,6 +416,15 @@ pub enum AdminCommand {
     },
     Pause,
     Resume,
+    /// Stops Genesis's visualization only, leaving the real match untouched.
+    GenesisStop,
+    /// Rebuilds Genesis's visualization for the current match (stop, then
+    /// start again with the same grid).
+    GenesisRestart,
+    /// Re-covers all cards and zeroes scores in Genesis's own
+    /// visualization without rebuilding the scene. Requires a Genesis
+    /// server that implements `admin_reset_board`.
+    GenesisReset,
     Stop,
     Finish,
     /// Starts a Practice Mode match on this arena: `team_name` plays alone
@@ -470,6 +479,9 @@ impl AdminCommand {
             }
             AdminCommand::Pause => Some(MasterToArena::AdminPause),
             AdminCommand::Resume => Some(MasterToArena::AdminResume),
+            AdminCommand::GenesisStop => Some(MasterToArena::AdminGenesisStop),
+            AdminCommand::GenesisRestart => Some(MasterToArena::AdminGenesisRestart),
+            AdminCommand::GenesisReset => Some(MasterToArena::AdminGenesisReset),
             AdminCommand::Stop => Some(MasterToArena::AdminStop),
             AdminCommand::Finish => Some(MasterToArena::AdminFinish),
             AdminCommand::StartPractice {

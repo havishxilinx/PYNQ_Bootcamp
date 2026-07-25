@@ -51,10 +51,13 @@ enum Command {
         genesis_url: Option<String>,
         /// Admin password for this Genesis server's `admin_start_competition`/
         /// `admin_stop_competition` actions -- must match that server's own
-        /// `GENESIS_ADMIN_PASSWORD` env var. Defaults to Genesis's own
-        /// documented default; ignored entirely when `genesis_url` is unset.
-        #[arg(long, default_value = "admin123")]
-        genesis_admin_password: String,
+        /// `GENESIS_ADMIN_PASSWORD` env var (read from the same env var here
+        /// if `--genesis-admin-password` is omitted). No default -- Genesis
+        /// itself no longer ships one either, since a fixed, publicly
+        /// documented password is not a real secret. Required whenever
+        /// `genesis_url` is set; ignored entirely otherwise.
+        #[arg(long, env = "GENESIS_ADMIN_PASSWORD")]
+        genesis_admin_password: Option<String>,
         /// Port of this Genesis server's separate live-viewer/stream
         /// process (`stream_server.py`), on the same host as `genesis_url`
         /// but a different port -- must match that server's own
@@ -170,18 +173,26 @@ fn main() -> Result<()> {
             genesis_admin_password,
             genesis_stream_port,
             hide_genesis_video,
-        } => run_arena(
-            &server,
-            &key,
-            &id,
-            &master_id,
-            arena_num,
-            gridmind_referee::arena::GenesisConfig {
-                url: genesis_url,
-                admin_password: genesis_admin_password,
-                stream_port: genesis_stream_port,
-                hide_video: hide_genesis_video,
-            },
-        ),
+        } => {
+            if genesis_url.is_some() && genesis_admin_password.is_none() {
+                eprintln!(
+                    "error: --genesis-admin-password (or GENESIS_ADMIN_PASSWORD) is required when --genesis-url is set -- there is no default password anymore"
+                );
+                std::process::exit(1);
+            }
+            run_arena(
+                &server,
+                &key,
+                &id,
+                &master_id,
+                arena_num,
+                gridmind_referee::arena::GenesisConfig {
+                    url: genesis_url,
+                    admin_password: genesis_admin_password.unwrap_or_default(),
+                    stream_port: genesis_stream_port,
+                    hide_video: hide_genesis_video,
+                },
+            )
+        }
     }
 }

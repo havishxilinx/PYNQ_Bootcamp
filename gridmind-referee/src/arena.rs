@@ -219,7 +219,9 @@ fn run_one_match(
     // whole match instead of just hiding the video zone.
     let genesis_stream_url = genesis.filter(|g| g.start_competition(genesis_admin_password, &grid))
         .and_then(|g| g.competition_stream_url(genesis_stream_port));
-    let mut state = GameState::new(teams.clone(), grid);
+    // Kept alive (not moved into `GameState`) so an `AdminGenesisRestart`
+    // later in this match can re-send the same layout to Genesis.
+    let mut state = GameState::new(teams.clone(), grid.clone());
 
     let team_names: Vec<String> = teams.iter().map(|(name, _)| name.clone()).collect();
 
@@ -278,6 +280,22 @@ fn run_one_match(
                     MasterToArena::AdminSetScore { team, score } => state.set_score(&team, score),
                     MasterToArena::AdminPause => state.pause(Instant::now()),
                     MasterToArena::AdminResume => state.resume(Instant::now()),
+                    MasterToArena::AdminGenesisStop => {
+                        if let Some(g) = genesis {
+                            g.stop_competition(genesis_admin_password);
+                        }
+                    }
+                    MasterToArena::AdminGenesisRestart => {
+                        if let Some(g) = genesis {
+                            g.stop_competition(genesis_admin_password);
+                            g.start_competition(genesis_admin_password, &grid);
+                        }
+                    }
+                    MasterToArena::AdminGenesisReset => {
+                        if let Some(g) = genesis {
+                            g.reset_board(genesis_admin_password);
+                        }
+                    }
                     MasterToArena::AdminStop => {
                         let msg = ArenaToMaster::MatchVoided {
                             arena: arena_num,

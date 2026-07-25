@@ -106,6 +106,23 @@ impl GenesisClient {
         let _ = self.post_action("admin_stop_competition", &body, DEFAULT_TIMEOUT);
     }
 
+    /// Re-covers all cards and zeroes both teams' scores in Genesis's own
+    /// visualization, without tearing down the scene -- lighter weight
+    /// than a stop+start restart, and doesn't need the grid re-sent since
+    /// the layout is unchanged. Requires a Genesis server that implements
+    /// `admin_reset_board` (added alongside `CompetitionManager.reset_board`
+    /// on the `genesis_update` branch); older servers reply with an
+    /// "Unknown ... action" error, which this swallows like every other
+    /// Genesis failure. Never lets a failure affect the real match.
+    pub fn reset_board(&self, admin_password: &str) {
+        let body = json!({
+            "action": "admin_reset_board",
+            "token": Value::Null,
+            "params": { "password": admin_password },
+        });
+        let _ = self.post_action("admin_reset_board", &body, DEFAULT_TIMEOUT);
+    }
+
     /// Shared request/response handling for both actions: posts `body`,
     /// and returns the parsed response JSON only if the request actually
     /// succeeded end to end. The real Genesis server always answers with
@@ -298,6 +315,40 @@ mod tests {
     fn stop_competition_does_not_panic_when_unreachable() {
         let client = GenesisClient::new("http://127.0.0.1:1");
         client.stop_competition("admin123");
+    }
+
+    #[test]
+    fn reset_board_posts_the_password_in_the_envelope() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::Json(json!({
+                "action": "admin_reset_board",
+                "token": null,
+                "params": { "password": "admin123" },
+            })))
+            .with_status(200)
+            .with_body(r#"{"status":"ok"}"#)
+            .create();
+
+        let client = GenesisClient::new(&server.url());
+        client.reset_board("admin123");
+        mock.assert();
+    }
+
+    #[test]
+    fn reset_board_does_not_panic_on_failure() {
+        let mut server = mockito::Server::new();
+        let _mock = server.mock("POST", "/").with_status(500).create();
+
+        let client = GenesisClient::new(&server.url());
+        client.reset_board("admin123");
+    }
+
+    #[test]
+    fn reset_board_does_not_panic_when_unreachable() {
+        let client = GenesisClient::new("http://127.0.0.1:1");
+        client.reset_board("admin123");
     }
 
     #[test]

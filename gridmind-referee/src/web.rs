@@ -43,6 +43,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/admin/set-score", post(admin_set_score))
         .route("/api/admin/pause", post(admin_pause))
         .route("/api/admin/resume", post(admin_resume))
+        .route("/api/admin/genesis-stop", post(admin_genesis_stop))
+        .route("/api/admin/genesis-restart", post(admin_genesis_restart))
+        .route("/api/admin/genesis-reset", post(admin_genesis_reset))
         .route("/api/admin/stop", post(admin_stop))
         .route("/api/admin/finish", post(admin_finish))
         .route("/api/admin/start-pregame", post(admin_start_pregame))
@@ -347,6 +350,39 @@ async fn admin_resume(
         Err(response) => return response,
     };
     send_result_status(sender.try_send(crate::master::AdminCommand::Resume))
+}
+
+async fn admin_genesis_stop(
+    State(state): State<AppState>,
+    Json(body): Json<AdminArenaRequest>,
+) -> impl IntoResponse {
+    let sender = match admin_sender(&state, body.arena) {
+        Ok(sender) => sender,
+        Err(response) => return response,
+    };
+    send_result_status(sender.try_send(crate::master::AdminCommand::GenesisStop))
+}
+
+async fn admin_genesis_restart(
+    State(state): State<AppState>,
+    Json(body): Json<AdminArenaRequest>,
+) -> impl IntoResponse {
+    let sender = match admin_sender(&state, body.arena) {
+        Ok(sender) => sender,
+        Err(response) => return response,
+    };
+    send_result_status(sender.try_send(crate::master::AdminCommand::GenesisRestart))
+}
+
+async fn admin_genesis_reset(
+    State(state): State<AppState>,
+    Json(body): Json<AdminArenaRequest>,
+) -> impl IntoResponse {
+    let sender = match admin_sender(&state, body.arena) {
+        Ok(sender) => sender,
+        Err(response) => return response,
+    };
+    send_result_status(sender.try_send(crate::master::AdminCommand::GenesisReset))
 }
 
 async fn admin_stop(
@@ -1036,6 +1072,42 @@ mod tests {
         assert_eq!(
             rx.admin_arena1.try_recv(),
             Ok(crate::master::AdminCommand::Resume)
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_genesis_stop_sends_on_the_admin_channel() {
+        let (state, mut rx) = test_app_state();
+        let app = build_router(state);
+        let response = post_json(app, "/api/admin/genesis-stop", r#"{"arena":1}"#).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            rx.admin_arena1.try_recv(),
+            Ok(crate::master::AdminCommand::GenesisStop)
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_genesis_restart_sends_on_the_admin_channel() {
+        let (state, mut rx) = test_app_state();
+        let app = build_router(state);
+        let response = post_json(app, "/api/admin/genesis-restart", r#"{"arena":1}"#).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            rx.admin_arena1.try_recv(),
+            Ok(crate::master::AdminCommand::GenesisRestart)
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_genesis_reset_sends_on_the_admin_channel() {
+        let (state, mut rx) = test_app_state();
+        let app = build_router(state);
+        let response = post_json(app, "/api/admin/genesis-reset", r#"{"arena":1}"#).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            rx.admin_arena1.try_recv(),
+            Ok(crate::master::AdminCommand::GenesisReset)
         );
     }
 

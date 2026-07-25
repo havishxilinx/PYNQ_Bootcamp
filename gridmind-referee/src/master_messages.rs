@@ -112,6 +112,23 @@ pub enum MasterToArena {
     AdminPause,
     #[serde(rename = "admin_resume")]
     AdminResume,
+    /// Stops Genesis's visualization only -- the real match (score, timer,
+    /// pair state) is untouched. Useful to free the GPU/scene without
+    /// voiding the game, e.g. if the viewer is frozen and nobody needs it.
+    #[serde(rename = "admin_genesis_stop")]
+    AdminGenesisStop,
+    /// Rebuilds Genesis's visualization from scratch for this same match
+    /// (stop then start again with the same grid) -- Genesis's own
+    /// `admin_start_competition` errors if a competition is already active,
+    /// so a clean restart must stop first. See `GenesisClient`.
+    #[serde(rename = "admin_genesis_restart")]
+    AdminGenesisRestart,
+    /// Re-covers all cards and zeroes scores in Genesis's own
+    /// visualization without rebuilding the scene -- lighter weight than
+    /// `AdminGenesisRestart`. Requires a Genesis server that implements
+    /// `admin_reset_board`. See `GenesisClient::reset_board`.
+    #[serde(rename = "admin_genesis_reset")]
+    AdminGenesisReset,
     /// Halts the match immediately and reports `MatchVoided` (not
     /// `MatchResult`, no winner/scores) -- the schedule entry reverts to
     /// `Ready` so the exact same matchup is handed out again the next
