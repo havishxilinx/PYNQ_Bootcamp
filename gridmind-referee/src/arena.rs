@@ -511,8 +511,17 @@ fn report_to_master(client: &P2pClient, master_id: &str, report: MatchReport) ->
 /// other 3 their messages. Only a `serde_json` serialization failure
 /// (which should never happen for a `RefereeMessage`) still propagates,
 /// since that's a genuine programming bug, not a network condition.
+///
+/// Waits `message_gap_ms` before every message after the first, so no two
+/// messages in one batch ever go out at literally the same instant --
+/// small enough that even a many-fragment free hint broadcast to both
+/// teams stays fast, unlike `turn_signal_delay_ms` (see
+/// `send_all_delaying_turn_signal`), which is deliberately much longer.
 fn send_all(client: &P2pClient, messages: Vec<(String, RefereeMessage)>) -> Result<()> {
-    for (id, msg) in messages {
+    for (index, (id, msg)) in messages.into_iter().enumerate() {
+        if index > 0 {
+            sleep(crate::config::get().message_gap());
+        }
         let payload = serde_json::to_string(&msg)?;
         if let Err(err) = client.send(&id, &payload) {
             eprintln!(
@@ -534,6 +543,12 @@ fn send_all(client: &P2pClient, messages: Vec<(String, RefereeMessage)>) -> Resu
 /// when there's actually something to separate it from -- a lone turn
 /// signal (e.g. from a timeout, which has nothing bundled with it) still
 /// goes out immediately.
+///
+/// Purely a message-delivery-safety gap -- NOT where physical-flip/paid-hint
+/// fairness is accounted for. That happens the instant each delay is
+/// actually incurred (`GameState::receive_flip`/`receive_flip_both` and
+/// `resolve_hint`'s accepted path push `turn_start` forward directly), so
+/// this function never needs to touch `state` at all.
 fn send_all_delaying_turn_signal(
     client: &P2pClient,
     messages: Vec<(String, RefereeMessage)>,

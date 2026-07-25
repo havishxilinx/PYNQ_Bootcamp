@@ -302,6 +302,21 @@ impl GameState {
         self.pairs_matched_by_team.clone()
     }
 
+    /// Excludes `extra` from every future elapsed-time calculation this
+    /// turn (the 120s timeout in `check_timeout`, and the speed-bonus tier
+    /// in `receive_result`) by pushing the clock's own start forward --
+    /// mathematically identical to "pause for `extra`, then resume",
+    /// without ever blocking the arena's message loop. Called the instant
+    /// a physical/hint delay is actually incurred (both positions revealed
+    /// in `receive_flip`/`receive_flip_both`, or a hint accepted in
+    /// `resolve_hint`) rather than retroactively subtracting an offset at
+    /// scoring time -- see `GameConfig::tier_bonus`'s doc comment for why
+    /// the old subtract-at-score-time approach became redundant once this
+    /// existed.
+    fn extend_turn_start(&mut self, extra: Duration) {
+        self.turn_start += extra;
+    }
+
     fn next_team(&mut self) {
         self.active_idx = (self.active_idx + 1) % self.teams.len();
         self.streak = 0;
@@ -394,6 +409,11 @@ impl GameState {
         self.revealed.insert(pos.to_string());
         if is_second_flip {
             self.flip_revealed = true;
+            // Both positions are now revealed -- the physical flip +
+            // camera re-capture this represents starts now, so exclude
+            // physical_flip_offset_secs from this turn's elapsed time
+            // before `report_result` (whenever it arrives) gets scored.
+            self.extend_turn_start(crate::config::get().physical_flip_offset());
         }
 
         self.teams
@@ -436,6 +456,11 @@ impl GameState {
         self.revealed.insert(pos1.to_string());
         self.revealed.insert(pos2.to_string());
         self.flip_revealed = true;
+        // Both positions are now revealed -- the physical flip + camera
+        // re-capture this represents starts now, so exclude
+        // physical_flip_offset_secs from this turn's elapsed time before
+        // `report_result` (whenever it arrives) gets scored.
+        self.extend_turn_start(crate::config::get().physical_flip_offset());
 
         [pos1, pos2]
             .iter()
@@ -841,6 +866,11 @@ impl GameState {
             .scores
             .get_mut(&active_team)
             .expect("active team always has a score entry") -= crate::config::get().hint_cost;
+        // Only the accepted path actually hands the client row/col digit
+        // images to decode (an on-board MNIST classification, reloading
+        // the DPU overlay) -- reject_hint's paths never send those, so
+        // there's no real decode delay to exclude there.
+        self.extend_turn_start(crate::config::get().paid_hint_pause());
 
         let (row_digit_png_base64, col_digit_png_base64) =
             crate::hints::row_col_digit_images(&target);
@@ -1137,7 +1167,11 @@ mod tests {
     fn flip_both_then_report_result_completes_a_turn_like_two_single_flips() {
         let mut state = GameState::new(two_teams(), small_grid());
         state.receive_flip_both("alpha", "A1", "A2");
-        age_turn_start(&mut state, 70);
+        // age_turn_start's absolute backdate overwrites (not adds to) the
+        // +20s receive_flip_both just applied via extend_turn_start -- 40s
+        // lands in the same "middle, 0 bonus" tier the old 70s value did
+        // back when tier_bonus itself still subtracted 20s first.
+        age_turn_start(&mut state, 40);
         state.receive_flip_both("alpha", "A1", "A2");
         let outcome = state.receive_result("alpha", "A1", "A2", "match").unwrap();
         match outcome {
@@ -1364,6 +1398,78 @@ mod tests {
     }
 
     #[test]
+    fn flip_both_excludes_the_physical_flip_offset_from_the_timeout_clock() {
+        // Without extend_turn_start, a team that used all but a few
+        // seconds of their 120s turn before even flipping would then time
+        // out from the physical_flip_offset_secs alone, never mind the
+        // time report_result actually takes to arrive.
+        let mut state = GameState::new(two_teams(), small_grid());
+        age_turn_start(&mut state, 105); // 15s left before flip_both's own 20s offset
+        state.receive_flip_both("alpha", "A1", "A2");
+        let result = state.check_timeout(Instant::now());
+        assert!(result.is_none());
+        assert_eq!(state.active_team(), "alpha");
+    }
+
+    #[test]
+    fn flip_both_excludes_the_physical_flip_offset_from_the_speed_tier() {
+        // A team acting instantly (0s "real" thinking time) should still
+        // land in the fastest scoring tier even though receive_flip_both
+        // itself represents the 20s physical-flip/re-capture window --
+        // that 20s must not count against their speed bonus.
+        let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A2"); // A1/A2 are both "dog"
+        let outcome = state.receive_result("alpha", "A1", "A2", "match").unwrap();
+        match outcome {
+            ResultOutcome::CorrectMatch { .. } => {}
+            other => panic!("expected CorrectMatch, got {other:?}"),
+        }
+        // streak 1 + fastest tier bonus (2) = 3, not degraded by the 20s
+        // receive_flip_both itself represents.
+        assert_eq!(state.scores().get("alpha"), Some(&3));
+    }
+
+    #[test]
+    fn an_accepted_hint_excludes_the_paid_hint_pause_from_the_timeout_clock() {
+        let mut state = GameState::new(two_teams(), small_grid());
+        // Fast match first (no aging) so the fastest tier applies and the
+        // score stays comfortably positive -- resolve_hint's score > 0
+        // rule would otherwise silently refuse the hint below, which
+        // isn't what this test is about. restart_turn_same_team resets
+        // turn_start fresh, so the aging below cleanly sets what the hint
+        // request itself will see.
+        state.receive_flip_both("alpha", "A1", "A2");
+        state.receive_result("alpha", "A1", "A2", "match").unwrap(); // streak 1 + fastest tier 2 = score 3
+        // 125s: already past the 120s timeout if the hint's 30s pause
+        // were NOT excluded, but resolve_hint's accepted path should push
+        // turn_start forward by paid_hint_pause_secs (30), leaving 95s
+        // elapsed -- comfortably under the timeout.
+        age_turn_start(&mut state, 125);
+        let outcome = state.receive_hint_request("alpha", "cat"); // A3/A4, neither revealed
+        assert!(matches!(outcome, Some(HintOutcome::Accepted { .. })));
+        let result = state.check_timeout(Instant::now());
+        assert!(result.is_none(), "the paid hint pause should have excluded 30s from this turn's elapsed time");
+        assert_eq!(state.active_team(), "alpha");
+    }
+
+    #[test]
+    fn a_rejected_hint_does_not_get_the_paid_hint_pause() {
+        // reject_hint's paths never send row/col digit images, so there's
+        // no client-side MNIST decode delay to exclude -- unlike the
+        // accepted path, this must not push turn_start forward at all.
+        let mut state = GameState::new(two_teams(), small_grid());
+        state.receive_flip_both("alpha", "A1", "A2");
+        state.receive_result("alpha", "A1", "A2", "match").unwrap(); // score 1, needed for the score>0 rule
+        let before = state.turn_seconds_remaining(Instant::now());
+        let outcome = state.receive_hint_request("alpha", "nonexistent-object");
+        assert!(matches!(outcome, Some(HintOutcome::Rejected { .. })));
+        let after = state.turn_seconds_remaining(Instant::now());
+        // Allow a tiny amount of real test-execution drift, but nowhere
+        // near paid_hint_pause_secs (30) -- confirms no offset was applied.
+        assert!(before.saturating_sub(after) < 2);
+    }
+
+    #[test]
     fn hint_for_never_revealed_object_reveals_lexicographically_smaller_position() {
         let mut state = GameState::new(two_teams(), small_grid());
         age_turn_start(&mut state, 70);
@@ -1424,14 +1530,20 @@ mod tests {
     #[test]
     fn hint_request_at_cap_is_refused_with_no_additional_cost() {
         let mut state = GameState::new(two_teams(), small_grid());
-        age_turn_start(&mut state, 70);
+        // Aging happens BEFORE this flip_both, so its own +20s adds on top
+        // (unlike the second age_turn_start below, which clobbers a
+        // preceding flip's advancement) -- 50s aged then -20s from the
+        // flip leaves 30s elapsed at receive_result, the same "middle, 0
+        // bonus" tier the old 70s/effective-50s value landed in back when
+        // tier_bonus itself still subtracted 20s first.
+        age_turn_start(&mut state, 50);
         state.receive_flip_both("alpha", "A1", "A2");
         state.receive_result("alpha", "A1", "A2", "match").unwrap(); // score 1
         state.receive_hint_request("alpha", "dog"); // "dog" already resolved -> rejected, score 0, slot 1/2
                                                     // score is now 0, so give alpha another point before testing the cap specifically.
         state.receive_flip("alpha", "A3");
         state.receive_flip("alpha", "A4");
-        age_turn_start(&mut state, 70);
+        age_turn_start(&mut state, 40);
         state.receive_flip_both("alpha", "A3", "A4");
         state.receive_result("alpha", "A3", "A4", "match").unwrap(); // streak continues: +2 -> score 2
         state.receive_hint_request("alpha", "cat"); // "cat" already resolved above -> rejected, score 1, slot 2/2

@@ -1723,6 +1723,12 @@ fn generate_free_hint_fragments(grid_id: &str) -> Option<Vec<String>> {
 
 /// Sends every fragment to both teams -- best-effort, a failed free-hint
 /// delivery should never block or fail the match itself.
+///
+/// Waits `message_gap_ms` before every message after the first (across
+/// both the per-team and per-fragment loops), so no two of these ever go
+/// out at literally the same instant -- see `arena::send_all`'s doc
+/// comment for why this is a separate, much smaller gap than
+/// `turn_signal_delay_ms`.
 fn send_free_hint_fragments(
     ctx: &AssignContext,
     team_a_id: &str,
@@ -1730,6 +1736,7 @@ fn send_free_hint_fragments(
     fragments: &[String],
 ) -> Result<()> {
     let total = fragments.len() as u32;
+    let mut sent_any = false;
     for (idx, fragment) in fragments.iter().enumerate() {
         let msg = RefereeMessage::FreeHintFragment {
             index: idx as u32,
@@ -1738,6 +1745,10 @@ fn send_free_hint_fragments(
         };
         let payload = serde_json::to_string(&msg)?;
         for (label, id) in [("team_a", team_a_id), ("team_b", team_b_id)] {
+            if sent_any {
+                sleep(crate::config::get().message_gap());
+            }
+            sent_any = true;
             if let Err(err) = ctx.client.send(id, &payload) {
                 eprintln!(
                     "pregame: failed to send free hint fragment {idx}/{total} to {label} (id {id}): {err:#}"
@@ -1868,14 +1879,22 @@ fn pick_and_track_riddle(ctx: &AssignContext, arena: u32) -> String {
 /// human referee is still the fallback delivery path for them. A team
 /// that joins *after* this runs is covered separately, by
 /// `join_listener.rs`'s own late-join resend -- not by retrying this.
+///
+/// Waits `message_gap_ms` before every message after the first, same
+/// reasoning as `arena::send_all`.
 fn send_riddle_to_known_teams(ctx: &AssignContext, matchup: &Matchup, riddle: &str) -> Result<()> {
     let known_macs = ctx.join_registry.snapshot();
     let payload = serde_json::to_string(&RefereeMessage::PregameRiddle {
         riddle: riddle.to_string(),
     })?;
+    let mut sent_any = false;
     for team in [&matchup.team_a, &matchup.team_b] {
         match known_macs.get(team) {
             Some(info) => {
+                if sent_any {
+                    sleep(crate::config::get().message_gap());
+                }
+                sent_any = true;
                 if let Err(err) = ctx.client.send(&info.mac, &payload) {
                     eprintln!(
                         "pregame: failed to send riddle to {team} (mac {}): {err:#}",

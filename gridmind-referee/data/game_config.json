@@ -3,6 +3,7 @@
   "physical_flip_offset_secs": 20,
   "puzzle_race_secs": 120,
   "free_hint_secs": 60,
+  "paid_hint_pause_secs": 30,
   "hint_cap": 2,
   "hint_cost": 1,
   "wrong_match_penalty": -2,
@@ -12,5 +13,6 @@
     { "max_elapsed_secs": 60, "bonus": 0 },
     { "max_elapsed_secs": 100, "bonus": -2 }
   ],
-  "turn_signal_delay_ms": 1000
+  "turn_signal_delay_ms": 1000,
+  "message_gap_ms": 50
 }
