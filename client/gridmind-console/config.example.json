@@ -1,0 +1,21 @@
+{
+  "server": "192.168.1.100:5000",
+  "broker_key": "bootcamp2024",
+  "referee_id": "arena-1-referee",
+  "master_id": "master-referee",
+  "team_name": "red",
+  "team_secret": "",
+  "board_id_override": "",
+  "grid_rows": 5,
+  "grid_cols": 6,
+  "board_corners": null,
+  "detection_approach": "aruco_border",
+  "border_marker_tl": 30,
+  "border_marker_tr": 31,
+  "border_marker_br": 33,
+  "border_marker_bl": 32,
+  "notebook_dir": ".",
+  "model_path": "tf_yolov3_voc.xmodel",
+  "classes_path": "img/voc_classes.txt",
+  "genesis_admin_password": ""
+}

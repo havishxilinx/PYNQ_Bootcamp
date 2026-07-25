@@ -1,0 +1,23 @@
+[project]
+name = "gridmind-console"
+version = "0.1.0"
+description = "Console/TUI GridMind client -- no Jupyter kernel involved"
+requires-python = ">=3.8"
+dependencies = [
+    "textual>=0.60",
+    "opencv-python",
+    "numpy",
+    "requests",
+]
+
+[tool.uv]
+# On the actual KV260 board, opencv/pynq_dpu/pynq_peripherals/pynqp2p are
+# already installed in the system Python as part of the PYNQ image -- create
+# this venv with --system-site-packages so it can see those, then `uv pip
+# install textual` into it for just the TUI dependency:
+#
+#   python3 -m venv --system-site-packages .venv
+#   source .venv/bin/activate
+#   uv pip install textual
+#   cp config.example.json config.json   # then fill in your team's values
+#   python3 -m gridmind_console.main
