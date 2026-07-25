@@ -1,3 +1,10 @@
+import os
+
+# config.py generates a random admin password when this is unset -- pin it
+# so every test using the literal "admin123" stays deterministic. Must run
+# before genesis_server.config is imported anywhere below.
+os.environ.setdefault("GENESIS_ADMIN_PASSWORD", "admin123")
+
 import pytest
 import json
 import threading

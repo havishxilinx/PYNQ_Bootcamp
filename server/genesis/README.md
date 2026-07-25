@@ -1,97 +1,166 @@
-# Genesis Simulation Server
+# Genesis Remote Robotics
 
-HTTP server that manages Genesis physics simulations for remote robot control.
+Remote robot simulation system using Genesis physics engine with live video streaming.
 
-## Installation
+## Quick Start
+
+### Server Setup
 
 ```bash
-cd genesis_server
+# Install
+cd genesis
+pip install -e .
+
+# Run (AMD GPU)
+python -m genesis_server.server
+```
+
+Server displays available IPs on startup. Share the IP with students.
+
+### Client Usage
+
+```bash
+# Install
+cd genesis/client/pynq-sim
 pip install -e .
 ```
 
-## Running the Server
+```python
+from pynqsim import SimulationClient
 
-```bash
-# Using the entry point script
-python scripts/run_server.py
+# Connect (ask instructor for IP)
+sim = SimulationClient("192.168.1.100", port=9002)
 
-# Or as a module
-python -m genesis_server.server
+# Create environment
+sim.create_environment(scene="pick_and_place")
+
+# Move robot
+sim.move_robot(robot_id=0, position=[0.5, 0.0, 0.3])
+sim.step(100)
+
+# Clean up
+sim.destroy()
 ```
 
 ## Configuration
 
-Set environment variables before starting:
+Set before starting server:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GENESIS_PORT` | 9002 | Server port |
-| `GENESIS_BACKEND` | cpu | Backend: `cpu`, `gpu`, `cuda`, `amdgpu`, `metal` |
-| `GENESIS_ADMIN_PASSWORD` | admin123 | Admin password |
-| `GENESIS_MAX_SESSIONS` | 10 | Max concurrent sessions |
-| `GENESIS_SESSION_TIMEOUT` | 7200 | Session timeout (seconds) |
+| `GENESIS_PORT` | 9002 | API port |
+| `GENESIS_STREAM_PORT` | 8080 | Video streaming port |
+| `GENESIS_BACKEND` | amdgpu | Use `cpu` if GPU fails |
+| `GENESIS_ADMIN_PASSWORD` | *(none)* | Admin password -- if unset, a random one-time password is generated and printed at server startup |
+
+### GPU Setup (AMD)
+
+```bash
+# Install ROCm PyTorch
+pip install torch --index-url https://download.pytorch.org/whl/rocm6.0
+
+# If GPU not detected, set:
+export HSA_OVERRIDE_GFX_VERSION=10.3.0  # Adjust for your GPU
+sudo usermod -a -G render,video $USER   # Then logout/login
+
+# Start with CPU fallback if issues:
+GENESIS_BACKEND=cpu python -m genesis_server.server
+```
 
 ## Available Scenes
 
-- `empty` - Plane with single Franka arm
-- `grid_5x6` - Franka arm with 5x6 colored grid
-- `pick_and_place` - Franka arm with table and cubes
-- `competition_2v2` - Two Franka arms for competition
-- `competition_card_flip` - Two arms with 5x6 flippable cards (turn-based)
+- `empty` - Single robot arm
+- `pick_and_place` - Robot with table and cubes
+- `grid_5x6` - Robot with colored grid
+- `competition_card_flip` - Two-player memory card game
+
+## Competition Mode
+
+### Instructor: Start Competition
+
+```python
+sim = SimulationClient("server-ip", 9002)
+
+# Simple start
+sim.admin_start_competition("competition_card_flip", password="<GENESIS_ADMIN_PASSWORD>")
+
+# With team passwords
+sim.admin_start_competition(
+    "competition_card_flip",
+    password="<GENESIS_ADMIN_PASSWORD>",
+    join_passwords={"team_red": "secret1", "team_blue": "secret2"}
+)
+```
+
+### Students: Join and Play
+
+```python
+# Join team
+sim.join_competition(team_id="team_red")
+# or with password: sim.join_competition("team_red", password="secret1")
+
+# Flip cards
+result = sim.flip_card(row=0, col=2)
+if result.get('match_result', {}).get('matched'):
+    print("Match! Go again!")
+
+# Check state
+state = sim.get_competition_state()
+print(f"Scores: {state['scores']}")
+```
+
+### Admin Controls
+
+```python
+# Reset board (re-cover all cards, zero scores)
+sim.admin_reset_board(password="<GENESIS_ADMIN_PASSWORD>")
+
+# Stop competition
+sim.admin_stop_competition(password="<GENESIS_ADMIN_PASSWORD>")
+```
+
+## Live Viewer
+
+Open in browser: `http://<server-ip>:8080`
 
 ## Adding Custom Scenes
 
-Drop Python files in the `scenes/` folder. Each file must have a `setup(scene)` function:
+Create `genesis/server/scenes/my_scene.py`:
 
 ```python
-# scenes/my_scene.py
 import genesis as gs
 
-def setup(scene):
+def setup(scene, card_layout=None):
     plane = scene.add_entity(gs.morphs.Plane())
     robot = scene.add_entity(gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml"))
     return {"robots": [robot]}
 ```
 
-The scene becomes available as `scene="my_scene"`.
+## Card Images
 
-## Adding Card Images
+Add PNG/JPG images to `genesis/server/assets/card_images/` for the card flip game.
 
-For the card flip competition, add PNG/JPG images to `assets/card_images/`.
+For 6×5 grid (30 cards), need 15 unique images (each appears twice).
 
-## API Reference
+## Troubleshooting
 
-### Standard Mode Actions
+**"Backend not available":**
+- Check PyTorch sees GPU: `python -c "import torch; print(torch.cuda.is_available())"`
+- Use CPU: `GENESIS_BACKEND=cpu python -m genesis_server.server`
 
-| Action | Params | Response |
-|--------|--------|----------|
-| `create_env` | `scene` | `token`, `status` |
-| `add_object` | `type`, `position`, `size`/`radius` | `object_id` |
-| `move_robot` | `robot_id`, `position` | `joint_angles` |
-| `move_joints` | `robot_id`, `angles` | `status` |
-| `gripper` | `robot_id`, `action` | `status` |
-| `get_state` | `robot_id` | `joints`, `end_effector` |
-| `step` | `steps` | `status` |
-| `reset` | - | `status` |
-| `start_recording` | - | `status` |
-| `stop_recording` | - | `video_base64` |
-| `get_objects` | - | `objects` |
-| `destroy_env` | - | `status` |
+**Connection refused:**
+- Check server is running
+- Verify IP/port
+- Check firewall
 
-### Competition Mode Actions
+**GPU not detected:**
+- Run `rocm-smi` to verify GPU visible
+- Set `HSA_OVERRIDE_GFX_VERSION` for your GPU model
+- Add user to render/video groups
 
-| Action | Params | Response |
-|--------|--------|----------|
-| `join_competition` | `team_id` | `token` |
-| `leave_competition` | - | `status` |
-| `get_competition_state` | - | `robots`, `objects`, `current_turn`, `scores` |
-| `end_turn` | - | `next_turn` |
+## Examples
 
-### Admin Actions
-
-| Action | Params | Response |
-|--------|--------|----------|
-| `admin_get_status` | `password` | `sessions`, `competition_active` |
-| `admin_start_competition` | `password`, `scene`, `card_layout` | `status` |
-| `admin_stop_competition` | `password` | `status` |
-| `admin_list_card_images` | `password` | `images` |
+See `genesis/client/` for Jupyter notebooks:
+- `PYNQ_RemoteSim_GettingStarted.ipynb` - Tutorial
+- `PYNQ_Competition_CardFlip.ipynb` - Competition guide
+- `PoC_TeamRed.ipynb` / `PoC_TeamBlue.ipynb` - Competition examples

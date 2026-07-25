@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 
 import genesis as gs
 
-from .config import SCENES_DIR, BACKEND, SHOW_VIEWER
+from .config import SCENES_DIR, BACKEND, SHOW_VIEWER, STREAM_PORT
 
 BACKEND_MAP = {
     "cpu": gs.cpu,
@@ -704,70 +704,59 @@ class GenesisSimulation:
 
         discard_z = cover_z
 
-        # Everything below moves the arm through a multi-second choreography
-        # (approach/descend/grasp/lift/teleport). If any step raises partway
-        # through -- an IK solve failing, a transient physics error -- the arm
-        # would otherwise be abandoned mid-motion in whatever contorted pose
-        # it was last commanded to. The NEXT competition action (either
-        # team's next turn) unconditionally calls freeze_robot() on the idle
-        # robot, which snapshots and re-asserts its CURRENT qpos every sim
-        # step -- so a robot left mid-motion here gets permanently locked
-        # into that broken pose for the rest of the match. The try/finally
-        # guarantees the arm is always dropped and sent home first.
+        # === APPROACH (faster travel) ===
+        self.move_robot_smooth(robot_id, [cover_x, cover_y, hover_z], num_waypoints=100)
+        self.step(30)
+        self.gripper(robot_id, "open")
+        self.step(30)
+
+        # === DESCEND STRAIGHT DOWN ===
+        self.move_robot(robot_id, [cover_x, cover_y, grab_z])
+        self.step(75)
+
+        # === GRASP (hold + close). Keep enough settle for a firm grip. ===
+        self.move_robot(robot_id, [cover_x, cover_y, grab_z])  # re-assert hold
+        self.gripper(robot_id, "close")
+        self.step(90)
+
+        # Release only the target cover so it can be lifted.
+        self.unpin_cover(card["cover"])
+
+        # === LIFT STRAIGHT UP ===
+        #self.move_robot(robot_id, [cover_x, cover_y, lift_z])
+        #self.step(40)
+        self.move_robot(robot_id, [cover_x, cover_y, safe_z])
+        self.step(10)
+
+            # === TELEPORT the cover from the gripper to the discard pile ===
+        # Open the gripper first so the fingers release, then snap the cover to the
+        # discard pile and let it settle there. No transport/place motion needed.
+        #self.gripper(robot_id, "open")
+        #self.step(20)
+
+        cover_entity.set_pos(np.array([discard_x, discard_y, discard_z]))
+        cover_entity.set_quat(np.array([1.0, 0.0, 0.0, 0.0]))
         try:
-            # === APPROACH (faster travel) ===
-            self.move_robot_smooth(robot_id, [cover_x, cover_y, hover_z], num_waypoints=100)
-            self.step(30)
-            self.gripper(robot_id, "open")
-            self.step(30)
+            cover_entity.zero_all_dofs_velocity()
+        except AttributeError:
+            pass
 
-            # === DESCEND STRAIGHT DOWN ===
-            self.move_robot(robot_id, [cover_x, cover_y, grab_z])
-            self.step(75)
+        # Briefly pin the cover at the pile so it doesn't get nudged while the
+        # sim settles, then release it to normal physics.
+        self.pin_cover(cover_entity)
+        self.step(20)
+        self.unpin_cover(cover_entity)
 
-            # === GRASP (hold + close). Keep enough settle for a firm grip. ===
-            self.move_robot(robot_id, [cover_x, cover_y, grab_z])  # re-assert hold
-            self.gripper(robot_id, "close")
-            self.step(90)
 
-            # Release only the target cover so it can be lifted.
-            self.unpin_cover(card["cover"])
 
-            # === LIFT STRAIGHT UP ===
-            #self.move_robot(robot_id, [cover_x, cover_y, lift_z])
-            #self.step(40)
-            self.move_robot(robot_id, [cover_x, cover_y, safe_z])
-            self.step(10)
 
-                # === TELEPORT the cover from the gripper to the discard pile ===
-            # Open the gripper first so the fingers release, then snap the cover to the
-            # discard pile and let it settle there. No transport/place motion needed.
-            #self.gripper(robot_id, "open")
-            #self.step(20)
+        # === RETURN HOME ===
+        self.reset_to_home(robot_id)
 
-            cover_entity.set_pos(np.array([discard_x, discard_y, discard_z]))
-            cover_entity.set_quat(np.array([1.0, 0.0, 0.0, 0.0]))
-            try:
-                cover_entity.zero_all_dofs_velocity()
-            except AttributeError:
-                pass
+        # Release all pinned covers.
+        self.unpin_all_covers()
 
-            # Briefly pin the cover at the pile so it doesn't get nudged while the
-            # sim settles, then release it to normal physics.
-            self.pin_cover(cover_entity)
-            self.step(20)
-            self.unpin_cover(cover_entity)
-
-            card["flipped"] = True
-        finally:
-            # Always drop whatever's held and return the arm home, even on
-            # failure above, so a single bad flip can't strand the robot.
-            try:
-                self.gripper(robot_id, "open")
-            except Exception as exc:
-                print(f"Warning: failed to open gripper during flip_card cleanup: {exc!r}")
-            self.reset_to_home(robot_id)
-            self.unpin_all_covers()
+        card["flipped"] = True
 
         return {
             "color_idx": card["color_idx"],
@@ -804,6 +793,80 @@ class GenesisSimulation:
             # back onto the card top.
             self.pin_cover(cover)
             self.step(30)
+            self.unpin_cover(cover)
+
+    def cover_card(self, row: int, col: int) -> bool:
+        """Force the cover back onto a single card, regardless of its state.
+
+        Returns True if a card existed at (row, col) and was re-covered.
+        Teleports the existing cover entity back to its original pose (same
+        set_pos/pin mechanism as unflip_card) and clears flipped/matched.
+        """
+        import numpy as np
+        if self.card_grid is None:
+            return False
+        if row < 0 or row >= self.grid_rows or col < 0 or col >= self.grid_cols:
+            raise ValueError(f"({row},{col}) out of range for "
+                            f"{self.grid_rows}x{self.grid_cols} grid")
+
+        card = self.card_grid[row][col]
+        if card is None:
+            return False
+
+        # Clear logical state -- force face-down even if it was a matched pair.
+        card["flipped"] = False
+        card["matched"] = False
+
+        cover = card["cover"]
+        x, y, cover_z = card["pos"]  # original cover center, stored at build
+        cover.set_pos(np.array([x, y, cover_z]))
+        cover.set_quat(np.array([1.0, 0.0, 0.0, 0.0]))
+        try:
+            cover.zero_all_dofs_velocity()
+        except AttributeError:
+            pass
+
+        # Briefly pin so it settles cleanly onto the card top.
+        self.pin_cover(cover)
+        self.step(30)
+        self.unpin_cover(cover)
+        return True
+
+    def reset_board(self) -> None:
+        """Re-cover the ENTIRE board: teleport every cover back to its spot and
+        clear each card's flipped/matched flags. Instant, no arm motion.
+
+        Reuses the same set_pos/set_quat + brief-pin approach as unflip_card, but
+        applies it to every card regardless of flipped/matched state (a matched
+        pair's covers were discarded too, so they must come back on a full reset).
+        """
+        import numpy as np
+        if self.card_grid is None:
+            return
+
+        covers_to_settle = []
+        for row in self.card_grid:
+            for card in row:
+                if card is None:
+                    continue
+                cover = card["cover"]
+                x, y, cover_z = card["pos"]  # original cover center from build
+                cover.set_pos(np.array([x, y, cover_z]))
+                cover.set_quat(np.array([1.0, 0.0, 0.0, 0.0]))
+                try:
+                    cover.zero_all_dofs_velocity()
+                except AttributeError:
+                    pass
+                # Reset logical state so the game treats them as fresh face-down.
+                card["flipped"] = False
+                card["matched"] = False
+                # Pin so it can't drift while the sim settles.
+                self.pin_cover(cover)
+                covers_to_settle.append(cover)
+
+        # Let all covers settle onto their card tops at once, then release pins.
+        self.step(30)
+        for cover in covers_to_settle:
             self.unpin_cover(cover)
 
     def get_card_state(self, row: int, col: int) -> Dict[str, Any]:
