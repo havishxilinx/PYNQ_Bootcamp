@@ -172,7 +172,7 @@ source ~/.genesis_server_config
 | `GENESIS_STREAM_PORT` | 8080 | Video streaming server port (for browser viewing) |
 | `GENESIS_BACKEND` | amdgpu | Compute backend: `cpu`, `gpu`, `cuda`, `amdgpu`, `metal` |
 | `GENESIS_SHOW_VIEWER` | true | Show Genesis desktop viewer (disable for headless) |
-| `GENESIS_ADMIN_PASSWORD` | admin123 | Admin password for server management |
+| `GENESIS_ADMIN_PASSWORD` | *(none)* | Admin password for server management -- if unset, a random one-time password is generated and printed at server startup |
 | `GENESIS_MAX_SESSIONS` | 10 | Maximum concurrent student sessions |
 | `GENESIS_SESSION_TIMEOUT` | 7200 | Idle session timeout in seconds (2 hours) |
 

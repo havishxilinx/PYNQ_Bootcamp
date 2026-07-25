@@ -107,14 +107,14 @@ sim.leave_competition()
 
 ```python
 # Start competition
-sim.admin_start_competition("competition_card_flip", password="admin123")
+sim.admin_start_competition("competition_card_flip", password="<GENESIS_ADMIN_PASSWORD>")
 
 # Check server status
-status = sim.admin_get_status(password="admin123")
+status = sim.admin_get_status(password="<GENESIS_ADMIN_PASSWORD>")
 print(f"Active sessions: {status['sessions']}")
 
 # Stop competition
-sim.admin_stop_competition(password="admin123")
+sim.admin_stop_competition(password="<GENESIS_ADMIN_PASSWORD>")
 ```
 
 See `notebooks/PYNQ_RemoteSim_GettingStarted.ipynb` for a complete tutorial.

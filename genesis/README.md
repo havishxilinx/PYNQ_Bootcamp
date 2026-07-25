@@ -51,7 +51,7 @@ Set before starting server:
 | `GENESIS_PORT` | 9002 | API port |
 | `GENESIS_STREAM_PORT` | 8080 | Video streaming port |
 | `GENESIS_BACKEND` | amdgpu | Use `cpu` if GPU fails |
-| `GENESIS_ADMIN_PASSWORD` | admin123 | Admin password |
+| `GENESIS_ADMIN_PASSWORD` | *(none)* | Admin password -- if unset, a random one-time password is generated and printed at server startup |
 
 ### GPU Setup (AMD)
 
@@ -82,12 +82,12 @@ GENESIS_BACKEND=cpu python -m genesis_server.server
 sim = SimulationClient("server-ip", 9002)
 
 # Simple start
-sim.admin_start_competition("competition_card_flip", password="admin123")
+sim.admin_start_competition("competition_card_flip", password="<GENESIS_ADMIN_PASSWORD>")
 
 # With team passwords
 sim.admin_start_competition(
     "competition_card_flip",
-    password="admin123",
+    password="<GENESIS_ADMIN_PASSWORD>",
     join_passwords={"team_red": "secret1", "team_blue": "secret2"}
 )
 ```
@@ -113,10 +113,10 @@ print(f"Scores: {state['scores']}")
 
 ```python
 # Reset board (re-cover all cards, zero scores)
-sim.admin_reset_board(password="admin123")
+sim.admin_reset_board(password="<GENESIS_ADMIN_PASSWORD>")
 
 # Stop competition
-sim.admin_stop_competition(password="admin123")
+sim.admin_stop_competition(password="<GENESIS_ADMIN_PASSWORD>")
 ```
 
 ## Live Viewer

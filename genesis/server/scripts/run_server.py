@@ -7,7 +7,8 @@ Usage:
 
 Environment variables:
     GENESIS_PORT: Server port (default: 9002)
-    GENESIS_ADMIN_PASSWORD: Admin password (default: admin123)
+    GENESIS_ADMIN_PASSWORD: Admin password (required; if unset, a random
+        one-time password is generated and printed at startup)
     GENESIS_MAX_SESSIONS: Maximum concurrent sessions (default: 10)
     GENESIS_SESSION_TIMEOUT: Session timeout in seconds (default: 7200)
 """
