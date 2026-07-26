@@ -43,7 +43,16 @@ def init_status_led(overlay, log=print):
 
 
 def set_status_led(color, lit_count=STATUS_LED_COUNT):
-    """Best-effort -- a missing/disconnected LED stick must never interrupt a match."""
+    """Best-effort -- a missing/disconnected LED stick must never interrupt a match.
+
+    `show()` used to only run inside the `color is not None` branch, so a
+    "turn it off" request (`color=None` -- called at startup before Connect,
+    and from `render_status()` whenever there's no active match) cleared the
+    in-memory pixel buffer but never actually pushed that to the physical
+    stick. Once any color had been shown once (e.g. the `no_match` red
+    flash, or `lost`'s persistent red), the LED stayed on that color
+    forever -- every later "clear" silently no-op'd on real hardware.
+    """
     if status_led is None:
         return
     try:
@@ -51,6 +60,6 @@ def set_status_led(color, lit_count=STATUS_LED_COUNT):
         if color is not None:
             for pixel in range(lit_count):
                 status_led.set_pixel(pixel, color)
-            status_led.show()
+        status_led.show()
     except Exception as exc:
         print(f'[status-led] update failed: {exc}')
