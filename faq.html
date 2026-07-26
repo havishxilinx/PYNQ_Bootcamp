@@ -208,6 +208,10 @@
                 <p>Flag it to the operator right away &mdash; they can pause the match with zero scoring side effect (paused time never counts against your clock), giving you time to restart your board and reconnect before resuming.</p>
               </details>
               <details>
+                <summary>My board's Jupyter kernel keeps crashing during a match &mdash; what do I do?</summary>
+                <p>If the same crash happens two or three times in a row, stop debugging the notebook mid-match and switch to <code>gridmind-console</code> instead &mdash; a plain terminal client with the identical wire protocol and match logic, but none of Jupyter's kernel/widget machinery, so it sidesteps that whole class of crash. Once you've switched for a match, keep using it rather than bouncing back and forth. See <a href="robotics-competition.html#choosing-your-client">Choosing Your Client</a> for details.</p>
+              </details>
+              <details>
                 <summary>Where do I find the exact wire protocol my client needs to speak?</summary>
                 <p>See <a href="gridmind-communication-flowchart.html">How to Build Your Own GridMind Client</a> for every message type, and the <a href="robotics-competition.html">Robotics Competition Overview</a> for the rules and scoring behind them.</p>
               </details>

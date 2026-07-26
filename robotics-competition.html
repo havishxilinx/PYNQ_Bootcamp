@@ -173,6 +173,36 @@
               for the exact wire messages and required integration points behind every step above.
             </p>
 
+            <h2 id="choosing-your-client">Choosing Your Client</h2>
+            <p class="text">
+              Both options below speak the identical wire protocol against the same referee, so
+              your board can switch between them at any time without losing match state.
+            </p>
+            <div class="card-grid">
+              <div class="card">
+                <span class="card-label">Default</span>
+                <h3>Jupyter Notebook</h3>
+                <p>The canonical implementation &mdash; every detection approach (YOLO, ArUco) and
+                  every wire message is built and tested here first. Use this by default; it's
+                  what every lesson up to this point has been building toward.</p>
+              </div>
+              <div class="card">
+                <span class="card-label">Fallback</span>
+                <h3>gridmind-console (TUI)</h3>
+                <p>A no-Jupyter, no-kernel port of the same client logic, for when the notebook
+                  itself is the problem. <strong>If your board's kernel crashes the same way two
+                  or three times in a row, stop debugging the notebook mid-match and switch to
+                  gridmind-console instead</strong> &mdash; it runs as a plain terminal process
+                  with none of Jupyter's kernel/widget machinery, so it sidesteps that entire
+                  class of crash. Once you've switched for a match, use it as your reference
+                  going forward rather than bouncing back and forth.</p>
+              </div>
+            </div>
+            <p class="text">
+              Both are included in the client bundle for the competition &mdash; a download link
+              will be posted here with the final pre-competition release.
+            </p>
+
           </div>
         </div>
       </div>
