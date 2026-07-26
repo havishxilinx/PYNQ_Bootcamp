@@ -1451,12 +1451,15 @@ struct AssignContext {
 /// wait) without blocking each other -- see this plan's header comment
 /// for why this matters.
 ///
-/// Exits (returns) once this arena's thread has nothing further to do,
-/// which today only happens after observing `NextAction::Champion` --
-/// the OTHER arena's thread (or this one, if it gets there first) is
-/// responsible for the actual champion announcement; both threads exiting
-/// is fine, since `run_master`'s own thread (the message-receiving loop)
-/// is what keeps the process alive for the web server.
+/// Never exits on its own -- even after `NextAction::Champion`, this keeps
+/// looping (idling, like `NextAction::Wait`) rather than returning. It used
+/// to return here, which dropped `admin_rx`'s receiver and permanently
+/// closed this arena's admin channel -- meaning Practice Match, Pause, and
+/// every other operator admin action (all relayed through this same loop's
+/// `admin_rx.try_recv()` at the top, independent of tournament phase)
+/// failed with "orchestrator not running" for the rest of the process's
+/// life the moment *any* tournament crowned a champion, including the
+/// trivial two-team dry run. Only a process restart could recover.
 ///
 /// Not panic-safe by design: if this function panics (e.g. `next_action`'s
 /// `panic!` on an arena/pool id outside {0,1,2}, which can't currently
@@ -1482,6 +1485,7 @@ fn run_arena_assignment_loop(
     mut admin_rx: tokio::sync::mpsc::Receiver<AdminCommand>,
 ) -> Result<()> {
     let mut board_ids: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut champion_announced = false;
     loop {
         // Relay any pending operator overrides straight to this arena's
         // process -- harmless to check even outside an active match (the
@@ -1587,10 +1591,11 @@ fn run_arena_assignment_loop(
                 )?;
             }
             NextAction::Champion { winner } => {
-                if arena_num == 1 {
+                if arena_num == 1 && !champion_announced {
                     println!("\n🏆 TOURNAMENT CHAMPION: {winner}\n");
+                    champion_announced = true;
                 }
-                return Ok(());
+                sleep(POLL_INTERVAL);
             }
             NextAction::Wait => {
                 sleep(POLL_INTERVAL);
