@@ -5,15 +5,16 @@ was dropped, only the live camera/debug image previews (which a terminal
 can't render) -- those are written to debug/*.jpg instead, see detection.py.
 """
 import json
+import sys
 import threading
 import time
 import traceback
 
 import requests
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
-    Header, Footer, Static, Input, Button, RadioSet, RadioButton,
+    Header, Footer, Static, Input, Button, Label, RadioSet, RadioButton,
     Checkbox, TabbedContent, TabPane, RichLog, Select,
 )
 
@@ -73,6 +74,51 @@ def _status_led_color_for_match(match):
     if match.stage in wait_stage_keys:
         return led.STATUS_LED_COLORS['opponent_turn']
     return led.STATUS_LED_COLORS['connecting']
+
+
+class _StdoutTee:
+    """Redirects print()/stdout writes to both the real stdout and the
+    Debug Log RichLog widget. Detection, match_client, mnist_hint, etc.
+    all use plain print() for diagnostics (border-marker counts, detection
+    misses, exceptions) from background threads -- once the TUI takes
+    over the screen, those writes go nowhere visible at all. This makes
+    them show up inside the app instead of requiring a second SSH session
+    tailing a redirected log file."""
+
+    def __init__(self, app, real_stdout):
+        self.app = app
+        self.real_stdout = real_stdout
+        self._buffer = ''
+
+    def write(self, text):
+        self.real_stdout.write(text)
+        self._buffer += text
+        while '\n' in self._buffer:
+            line, self._buffer = self._buffer.split('\n', 1)
+            if line:
+                self._write_line(line)
+        return len(text)
+
+    def _write_line(self, line):
+        if threading.current_thread() is self.app._app_thread:
+            self._append(line)
+        else:
+            try:
+                self.app.call_from_thread(self._append, line)
+            except Exception:
+                pass  # app shutting down / no longer running
+
+    def _append(self, line):
+        try:
+            self.app.query_one('#debug_log', RichLog).write(line)
+        except Exception:
+            pass
+
+    def flush(self):
+        self.real_stdout.flush()
+
+    def isatty(self):
+        return False
 
 
 class GridMindApp(App):
@@ -135,9 +181,29 @@ class GridMindApp(App):
         margin-bottom: 1;
     }
 
+    /* One labeled input: a small caption directly above its field, so a
+       pre-filled Input (which hides its own placeholder text) still says
+       what it is. */
+    .field {
+        width: 1fr;
+        margin-right: 1;
+        height: auto;
+    }
+
+    .field-label {
+        color: $text-muted;
+        text-style: none;
+        margin: 0 0 0 1;
+        height: 1;
+    }
+
     Input {
         width: 1fr;
         margin-right: 1;
+    }
+
+    .field Input {
+        margin-right: 0;
     }
 
     Input:focus {
@@ -182,14 +248,28 @@ class GridMindApp(App):
 
                     yield Static('[bold]Connection[/bold]', classes='section-title')
                     with Horizontal(classes='row'):
-                        yield Input(value=self.config.server, id='server_input')
-                        yield Input(value=self.config.broker_key, id='key_input')
-                        yield Input(value=self.config.referee_id, id='referee_input')
-                        yield Input(value=self.config.master_id, id='master_input')
+                        with Vertical(classes='field'):
+                            yield Label('Broker server', classes='field-label')
+                            yield Input(value=self.config.server, id='server_input')
+                        with Vertical(classes='field'):
+                            yield Label('Broker key', classes='field-label')
+                            yield Input(value=self.config.broker_key, id='key_input')
+                        with Vertical(classes='field'):
+                            yield Label('Referee (arena) ID', classes='field-label')
+                            yield Input(value=self.config.referee_id, id='referee_input')
+                        with Vertical(classes='field'):
+                            yield Label('Master ID', classes='field-label')
+                            yield Input(value=self.config.master_id, id='master_input')
                     with Horizontal(classes='row'):
-                        yield Input(value=self.config.team_name, id='team_input')
-                        yield Input(value=self.config.team_secret, placeholder='team secret (blank to skip)', id='team_secret_input', password=True)
-                        yield Input(value=self.config.board_id_override, placeholder='board ID override', id='board_id_input')
+                        with Vertical(classes='field'):
+                            yield Label('Team name', classes='field-label')
+                            yield Input(value=self.config.team_name, id='team_input')
+                        with Vertical(classes='field'):
+                            yield Label('Team secret (blank to skip)', classes='field-label')
+                            yield Input(value=self.config.team_secret, placeholder='team secret (blank to skip)', id='team_secret_input', password=True)
+                        with Vertical(classes='field'):
+                            yield Label('Board ID override', classes='field-label')
+                            yield Input(value=self.config.board_id_override, placeholder='board ID override', id='board_id_input')
                     with Horizontal(classes='row'):
                         yield Button('Test Connectivity', id='test_connectivity_button', variant='primary')
                         yield Button('Connect', id='connect_button', variant='success')
@@ -290,12 +370,22 @@ class GridMindApp(App):
                     yield RichLog(id='hint_output', classes='panel', wrap=True)
 
             with TabPane('Log', id='log'):
+                yield Static('[bold]Wire Messages[/bold]', classes='section-title')
                 yield Checkbox('Show raw wire messages', id='show_raw_log_checkbox')
                 yield RichLog(id='wire_log', wrap=True)
+                yield Static(
+                    '[bold]Debug / System Log[/bold] -- everything detection.py, match_client.py, '
+                    'etc. print() (border-marker counts, detection misses, exceptions) -- previously '
+                    'invisible once the TUI took over the screen.',
+                    classes='panel',
+                )
+                yield RichLog(id='debug_log', wrap=True)
         yield Footer()
 
     def on_mount(self):
         self._app_thread = threading.current_thread()
+        self._real_stdout = sys.stdout
+        sys.stdout = _StdoutTee(self, self._real_stdout)
         options = detection.video_devices() or []
         select = self.query_one('#mnist_camera_select', Select)
         select.set_options([(d, d) for d in options])
@@ -303,6 +393,9 @@ class GridMindApp(App):
             default = next((d for d in options if d != detection.camera_device), options[0])
             select.value = default
         self.render_status()
+
+    def on_unmount(self):
+        sys.stdout = self._real_stdout
 
     # -- helpers -----------------------------------------------------------
     def _log_to(self, widget_id, text):
