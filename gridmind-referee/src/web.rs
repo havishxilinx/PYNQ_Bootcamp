@@ -126,6 +126,29 @@ fn send_result_status<T>(result: Result<(), TrySendError<T>>) -> (StatusCode, &'
     }
 }
 
+/// Same idea as `send_result_status`, but for anything sent into one of
+/// `run_arena_assignment_loop`'s own channels for a specific arena --
+/// `admin_arena{1,2}` (`AdminCommand`, via `admin_sender`) and
+/// `match_start_arena{1,2}` (`MatchStartInput`, from `start_match`). Unlike
+/// the generic message above, a `Closed` error on either of these has
+/// exactly one cause: that loop already returned because this arena's
+/// tournament crowned a champion (a deliberate, permanent exit -- see that
+/// function's doc comment), so the message can say exactly that instead of
+/// the vague "orchestrator not running", which otherwise reads like a bug
+/// report to an operator rather than an expected end state.
+fn send_arena_admin_result_status<T>(result: Result<(), TrySendError<T>>) -> (StatusCode, &'static str) {
+    match result {
+        Ok(()) => (StatusCode::OK, "ok"),
+        Err(TrySendError::Full(_)) => (StatusCode::SERVICE_UNAVAILABLE, "busy, try again"),
+        Err(TrySendError::Closed(_)) => (
+            StatusCode::GONE,
+            "this arena's tournament has already concluded (a champion was decided) -- \
+             restart gridmind-referee with fresh configuration to start another tournament \
+             or a practice match",
+        ),
+    }
+}
+
 async fn start_tournament(State(state): State<AppState>) -> impl IntoResponse {
     send_result_status(state.operator_channels.start_tournament.try_send(()))
 }
@@ -175,7 +198,7 @@ async fn start_match(
         2 => &state.operator_channels.match_start_arena2,
         _ => return (StatusCode::BAD_REQUEST, "arena must be 1 or 2"),
     };
-    send_result_status(sender.try_send(input))
+    send_arena_admin_result_status(sender.try_send(input))
 }
 
 #[derive(Deserialize)]
@@ -319,7 +342,7 @@ async fn admin_set_score(
         Ok(sender) => sender,
         Err(response) => return response,
     };
-    send_result_status(sender.try_send(crate::master::AdminCommand::SetScore {
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::SetScore {
         team: body.team,
         score: body.score,
     }))
@@ -338,7 +361,7 @@ async fn admin_pause(
         Ok(sender) => sender,
         Err(response) => return response,
     };
-    send_result_status(sender.try_send(crate::master::AdminCommand::Pause))
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::Pause))
 }
 
 async fn admin_resume(
@@ -349,7 +372,7 @@ async fn admin_resume(
         Ok(sender) => sender,
         Err(response) => return response,
     };
-    send_result_status(sender.try_send(crate::master::AdminCommand::Resume))
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::Resume))
 }
 
 async fn admin_genesis_stop(
@@ -360,7 +383,7 @@ async fn admin_genesis_stop(
         Ok(sender) => sender,
         Err(response) => return response,
     };
-    send_result_status(sender.try_send(crate::master::AdminCommand::GenesisStop))
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::GenesisStop))
 }
 
 async fn admin_genesis_restart(
@@ -371,7 +394,7 @@ async fn admin_genesis_restart(
         Ok(sender) => sender,
         Err(response) => return response,
     };
-    send_result_status(sender.try_send(crate::master::AdminCommand::GenesisRestart))
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::GenesisRestart))
 }
 
 async fn admin_genesis_reset(
@@ -382,7 +405,7 @@ async fn admin_genesis_reset(
         Ok(sender) => sender,
         Err(response) => return response,
     };
-    send_result_status(sender.try_send(crate::master::AdminCommand::GenesisReset))
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::GenesisReset))
 }
 
 async fn admin_stop(
@@ -393,7 +416,7 @@ async fn admin_stop(
         Ok(sender) => sender,
         Err(response) => return response,
     };
-    send_result_status(sender.try_send(crate::master::AdminCommand::Stop))
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::Stop))
 }
 
 async fn admin_finish(
@@ -404,7 +427,7 @@ async fn admin_finish(
         Ok(sender) => sender,
         Err(response) => return response,
     };
-    send_result_status(sender.try_send(crate::master::AdminCommand::Finish))
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::Finish))
 }
 
 /// Sends the free hint once the operator has confirmed the puzzle winner
@@ -419,7 +442,7 @@ async fn admin_begin_match(
         Ok(sender) => sender,
         Err(response) => return response,
     };
-    send_result_status(sender.try_send(crate::master::AdminCommand::BeginMatch))
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::BeginMatch))
 }
 
 /// Starts the pre-game riddle once both teams have joined -- a no-op
@@ -433,7 +456,7 @@ async fn admin_start_pregame(
         Ok(sender) => sender,
         Err(response) => return response,
     };
-    send_result_status(sender.try_send(crate::master::AdminCommand::StartPregame))
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::StartPregame))
 }
 
 /// Resends the current pregame stage's content (riddle or free hint)
@@ -449,7 +472,7 @@ async fn admin_resend_pregame(
         Ok(sender) => sender,
         Err(response) => return response,
     };
-    send_result_status(sender.try_send(crate::master::AdminCommand::ResendPregame))
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::ResendPregame))
 }
 
 /// Restarts this arena's current pregame stage from scratch -- a fresh
@@ -464,7 +487,7 @@ async fn admin_restart_pregame(
         Ok(sender) => sender,
         Err(response) => return response,
     };
-    send_result_status(sender.try_send(crate::master::AdminCommand::RestartPregame))
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::RestartPregame))
 }
 
 /// True if `arena` currently has a real match live or its pre-game
@@ -535,7 +558,7 @@ async fn start_practice_match(
             "arena already has a live match or pre-game ceremony in progress",
         );
     }
-    send_result_status(sender.try_send(crate::master::AdminCommand::StartPractice {
+    send_arena_admin_result_status(sender.try_send(crate::master::AdminCommand::StartPractice {
         team_name: body.team_name,
         team_mac: body.team_mac,
         grid_id: body.grid_id,
@@ -1061,6 +1084,16 @@ mod tests {
             Ok(crate::master::AdminCommand::Pause)
         );
         assert!(rx.admin_arena1.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn admin_pause_returns_410_gone_with_a_clear_message_once_the_arena_thread_has_exited() {
+        let (state, mut rx) = test_app_state();
+        drop(rx.admin_arena1); // simulates run_arena_assignment_loop having returned after a champion
+        let app = build_router(state);
+        let response = post_json(app, "/api/admin/pause", r#"{"arena":1}"#).await;
+        assert_eq!(response.status(), StatusCode::GONE);
+        assert!(rx.admin_arena2.try_recv().is_err());
     }
 
     #[tokio::test]
